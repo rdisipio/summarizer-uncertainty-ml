@@ -22,6 +22,7 @@ import json
 import gzip
 import time
 from tqdm import tqdm
+from nltk import sent_tokenize
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import requests
 import backoff
@@ -138,7 +139,6 @@ def summarize_chunk(chunk_obj, provider="openai", model="gpt-4o-mini", temperatu
             # If the assistant returned a JSON-like or numbered list, try to extract quotes
             # Otherwise, fallback to splitting the full text into sentences
             joined = " ".join(lines)
-            from nltk import sent_tokenize
             sentences = sent_tokenize(joined)
 
     out = {
