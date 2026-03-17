@@ -2,36 +2,37 @@
 """
 summarize_and_store.py
 - Read chunk JSONL produced by fetch_and_chunk.py
-- Call summarizer API (OpenAI chat or OpenRouter)
+- Call the OpenRouter chat completions API
 - Store structured results (summary sentences, raw response, prompt, metadata) to JSONL
 
 Usage:
-    export OPENAI_API_KEY=...
-    python summarize_and_store.py --in chunks.jsonl.gz --out summaries.jsonl.gz --provider openai --model gpt-4o-mini --samples 3 --temperature 0.2
+    echo "OPENROUTER_API_KEY=..." > .env
+    python summarize_and_store.py --infile chunks.jsonl.gz --outfile summaries.jsonl.gz --model openai/gpt-4o-mini --samples 3 --temperature 0.2
 
 Requirements:
-    pip install openai requests tqdm ratelimit backoff
+    pip install requests tqdm backoff nltk python-dotenv
 Notes:
     - Chat endpoints typically do NOT return token logprobs. If you need token logprobs, use completion endpoints that expose them.
-    - OpenRouter usage via requests is shown as a fallback; set OPENROUTER_API_KEY if using provider=openrouter.
+    - The script loads OPENROUTER_API_KEY from a .env file in the project root.
 """
 
 import argparse
-import os
-import json
 import gzip
+import json
+import os
+from pathlib import Path
 import time
-from tqdm import tqdm
-from nltk import sent_tokenize
 from concurrent.futures import ThreadPoolExecutor, as_completed
-import requests
-import backoff
 
-# Optional: import openai if provider=openai
-try:
-    import openai
-except Exception:
-    openai = None
+import backoff
+import requests
+from dotenv import load_dotenv
+from nltk import sent_tokenize
+from tqdm import tqdm
+
+ROOT_DIR = Path(__file__).resolve().parent.parent
+load_dotenv(ROOT_DIR / ".env")
+openrouter_api_key = os.environ.get("OPENROUTER_API_KEY")
 
 # ----------------------------
 # Helpers
@@ -51,22 +52,7 @@ def write_jsonl(path, obj):
 # API callers (with backoff)
 # ----------------------------
 @backoff.on_exception(backoff.expo, Exception, max_tries=5)
-def call_openai_chat(prompt_messages, model, temperature, max_tokens=256, api_key=None):
-    if openai is None:
-        raise RuntimeError("openai package not installed")
-    openai.api_key = api_key or os.environ.get("OPENAI_API_KEY")
-    resp = openai.ChatCompletion.create(
-        model=model,
-        messages=prompt_messages,
-        temperature=temperature,
-        max_tokens=max_tokens,
-        n=1
-        # note: ChatCompletion usually doesn't return token logprobs
-    )
-    return resp
-
-@backoff.on_exception(backoff.expo, Exception, max_tries=5)
-def call_openrouter_chat(prompt, model, temperature, api_key=None):
+def call_openrouter_chat(prompt, model, temperature, max_tokens=256, api_key=None):
     key = api_key or os.environ.get("OPENROUTER_API_KEY")
     if not key:
         raise RuntimeError("OPENROUTER_API_KEY not set")
@@ -76,6 +62,7 @@ def call_openrouter_chat(prompt, model, temperature, api_key=None):
         "model": model,
         "messages": [{"role": "user", "content": prompt}],
         "temperature": temperature,
+        "max_tokens": max_tokens,
         "n": 1
     }
     r = requests.post(url, json=payload, headers=headers, timeout=60)
@@ -92,33 +79,19 @@ Return JSON exactly in this format:
 Paragraph:
 {paragraph}
 """
-
-def make_messages_from_prompt(prompt):
-    # Chat API compatible messages (user-only)
-    return [{"role": "user", "content": prompt}]
-
 # ----------------------------
 # Worker
 # ----------------------------
-def summarize_chunk(chunk_obj, provider="openai", model="gpt-4o-mini", temperature=0.0, api_keys=None, max_tokens=200):
+def summarize_chunk(chunk_obj, model="openai/gpt-4o-mini", temperature=0.0, api_key=None, max_tokens=200):
     paragraph = chunk_obj["paragraph_text"]
     prompt = PROMPT_TEMPLATE.format(paragraph=paragraph)
     start = time.time()
     raw = None
     try:
-        if provider == "openai":
-            messages = make_messages_from_prompt(prompt)
-            raw = call_openai_chat(messages, model=model, temperature=temperature, max_tokens=max_tokens, api_key=api_keys.get("openai"))
-            # parse assistant text
-            text = raw["choices"][0]["message"]["content"].strip()
-            provider_meta = {"provider": "openai", "model": model}
-        else:
-            raw = call_openrouter_chat(prompt, model=model, temperature=temperature, api_key=api_keys.get("openrouter"))
-            # OpenRouter response format might differ
-            # try to access the assistant message
-            choices = raw.get("choices") or []
-            text = choices[0].get("message", {}).get("content") if choices else ""
-            provider_meta = {"provider": "openrouter", "model": model}
+        raw = call_openrouter_chat(prompt, model=model, temperature=temperature, max_tokens=max_tokens, api_key=api_key)
+        choices = raw.get("choices") or []
+        text = choices[0].get("message", {}).get("content", "").strip() if choices else ""
+        provider_meta = {"provider": "openrouter", "model": model}
     except Exception as e:
         return {"error": str(e), "id": chunk_obj["id"], "chunk_meta": chunk_obj}
 
@@ -162,23 +135,25 @@ def summarize_chunk(chunk_obj, provider="openai", model="gpt-4o-mini", temperatu
 # Main
 # ----------------------------
 def main(args):
-    api_keys = {"openai": os.environ.get("OPENAI_API_KEY"), "openrouter": os.environ.get("OPENROUTER_API_KEY")}
     # Threaded pool for moderate concurrency
     pool = ThreadPoolExecutor(max_workers=args.workers)
     futures = []
-    count = 0
     # iterate chunks
     for chunk in read_jsonl(args.infile):
         # If you want multiple samples per chunk, call multiple times with different temps
         temps = [args.temperature] if args.samples == 1 else [args.temperature] + [args.temperature + 0.2 * i for i in range(1, args.samples)]
         for temp in temps:
-            future = pool.submit(summarize_chunk, chunk, args.provider, args.model, float(temp), api_keys, args.max_tokens)
+            future = pool.submit(
+                summarize_chunk,
+                chunk,
+                args.model,
+                float(temp),
+                openrouter_api_key,
+                args.max_tokens,
+            )
             futures.append(future)
-            count += 1
             # optional: throttle launching to respect rate limits
             if len(futures) > args.max_queue:
-                # wait for some to finish
-                done, not_done = [], []
                 for f in as_completed(futures, timeout=None):
                     res = f.result()
                     write_jsonl(args.outfile, res)
@@ -197,12 +172,10 @@ def main(args):
     print("Finished. Wrote results to", args.outfile)
 
 if __name__ == "__main__":
-    import argparse
     p = argparse.ArgumentParser()
     p.add_argument("--infile", required=True, help="input chunks JSONL (gz ok)")
     p.add_argument("--outfile", required=True, help="output JSONL (gz ok)")
-    p.add_argument("--provider", choices=["openai", "openrouter"], default="openai")
-    p.add_argument("--model", default="gpt-4o-mini")
+    p.add_argument("--model", default="openai/gpt-4o-mini")
     p.add_argument("--temperature", type=float, default=0.0)
     p.add_argument("--samples", type=int, default=1, help="number of sampled responses per chunk (varying temps by +0.2 increments)")
     p.add_argument("--workers", type=int, default=4, help="concurrent worker threads")
