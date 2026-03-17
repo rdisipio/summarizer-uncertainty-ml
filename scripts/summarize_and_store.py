@@ -21,6 +21,7 @@ import gzip
 import json
 import os
 from pathlib import Path
+import ssl
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
@@ -28,15 +29,51 @@ import backoff
 import requests
 from dotenv import load_dotenv
 from nltk import sent_tokenize
+from requests.adapters import HTTPAdapter
 from tqdm import tqdm
 
 ROOT_DIR = Path(__file__).resolve().parent.parent
 load_dotenv(ROOT_DIR / ".env")
 openrouter_api_key = os.environ.get("OPENROUTER_API_KEY")
+DEFAULT_USER_AGENT = "summarizer-uncertainty-ml/0.1 (research script; contact: local-dev)"
+OPENROUTER_ENDPOINT = "https://openrouter.ai/api/v1/chat/completions"
+OPENROUTER_SITE_URL = os.environ.get("OPENROUTER_SITE_URL")
+OPENROUTER_APP_NAME = os.environ.get("OPENROUTER_APP_NAME", "summarizer-uncertainty-ml")
+
+
+class SSLContextAdapter(HTTPAdapter):
+    """Requests adapter that uses a caller-provided SSL context."""
+
+    def __init__(self, ssl_context: ssl.SSLContext) -> None:
+        self.ssl_context = ssl_context
+        super().__init__()
+
+    def init_poolmanager(self, *args, **kwargs):
+        kwargs["ssl_context"] = self.ssl_context
+        return super().init_poolmanager(*args, **kwargs)
+
+    def proxy_manager_for(self, *args, **kwargs):
+        kwargs["ssl_context"] = self.ssl_context
+        return super().proxy_manager_for(*args, **kwargs)
 
 # ----------------------------
 # Helpers
 # ----------------------------
+def build_session(cert_path=None):
+    """Build a requests session, optionally using a custom CA bundle."""
+
+    session = requests.Session()
+    session.headers.update({"User-Agent": DEFAULT_USER_AGENT})
+    if cert_path:
+        ssl_context = ssl.create_default_context()
+        if hasattr(ssl, "VERIFY_X509_STRICT"):
+            ssl_context.verify_flags &= ~ssl.VERIFY_X509_STRICT
+        ssl_context.load_verify_locations(cafile=cert_path)
+        adapter = SSLContextAdapter(ssl_context)
+        session.mount("https://", adapter)
+    return session
+
+
 def read_jsonl(path):
     opener = gzip.open if path.endswith(".gz") else open
     with opener(path, "rt", encoding="utf-8") as f:
@@ -52,12 +89,19 @@ def write_jsonl(path, obj):
 # API callers (with backoff)
 # ----------------------------
 @backoff.on_exception(backoff.expo, Exception, max_tries=5)
-def call_openrouter_chat(prompt, model, temperature, max_tokens=256, api_key=None):
-    key = api_key or os.environ.get("OPENROUTER_API_KEY")
+def call_openrouter_chat(prompt, model, temperature, max_tokens=256, api_key=None, session=None):
+    key = (api_key or os.environ.get("OPENROUTER_API_KEY") or "").strip()
     if not key:
         raise RuntimeError("OPENROUTER_API_KEY not set")
-    url = "https://api.openrouter.ai/v1/chat/completions"
-    headers = {"Authorization": f"Bearer {key}", "Content-Type": "application/json"}
+    request_session = session or build_session()
+    headers = {
+        "Authorization": f"Bearer {key}",
+        "Content-Type": "application/json",
+    }
+    if OPENROUTER_SITE_URL:
+        headers["HTTP-Referer"] = OPENROUTER_SITE_URL
+    if OPENROUTER_APP_NAME:
+        headers["X-Title"] = OPENROUTER_APP_NAME
     payload = {
         "model": model,
         "messages": [{"role": "user", "content": prompt}],
@@ -65,8 +109,9 @@ def call_openrouter_chat(prompt, model, temperature, max_tokens=256, api_key=Non
         "max_tokens": max_tokens,
         "n": 1
     }
-    r = requests.post(url, json=payload, headers=headers, timeout=60)
-    r.raise_for_status()
+    r = request_session.post(OPENROUTER_ENDPOINT, json=payload, headers=headers, timeout=60)
+    if r.status_code >= 400:
+        raise RuntimeError(f"OpenRouter error {r.status_code}: {r.text[:1000]}")
     return r.json()
 
 # ----------------------------
@@ -82,13 +127,20 @@ Paragraph:
 # ----------------------------
 # Worker
 # ----------------------------
-def summarize_chunk(chunk_obj, model="openai/gpt-4o-mini", temperature=0.0, api_key=None, max_tokens=200):
+def summarize_chunk(chunk_obj, model="openai/gpt-4o-mini", temperature=0.0, api_key=None, max_tokens=200, session=None):
     paragraph = chunk_obj["paragraph_text"]
     prompt = PROMPT_TEMPLATE.format(paragraph=paragraph)
     start = time.time()
     raw = None
     try:
-        raw = call_openrouter_chat(prompt, model=model, temperature=temperature, max_tokens=max_tokens, api_key=api_key)
+        raw = call_openrouter_chat(
+            prompt,
+            model=model,
+            temperature=temperature,
+            max_tokens=max_tokens,
+            api_key=api_key,
+            session=session,
+        )
         choices = raw.get("choices") or []
         text = choices[0].get("message", {}).get("content", "").strip() if choices else ""
         provider_meta = {"provider": "openrouter", "model": model}
@@ -136,10 +188,13 @@ def summarize_chunk(chunk_obj, model="openai/gpt-4o-mini", temperature=0.0, api_
 # ----------------------------
 def main(args):
     # Threaded pool for moderate concurrency
+    session = build_session(cert_path=args.ssl_cert)
     pool = ThreadPoolExecutor(max_workers=args.workers)
     futures = []
     # iterate chunks
-    for chunk in read_jsonl(args.infile):
+    for chunk_count, chunk in enumerate(read_jsonl(args.infile)):
+        if args.n_max is not None and chunk_count >= args.n_max:
+            break
         # If you want multiple samples per chunk, call multiple times with different temps
         temps = [args.temperature] if args.samples == 1 else [args.temperature] + [args.temperature + 0.2 * i for i in range(1, args.samples)]
         for temp in temps:
@@ -150,6 +205,7 @@ def main(args):
                 float(temp),
                 openrouter_api_key,
                 args.max_tokens,
+                session,
             )
             futures.append(future)
             # optional: throttle launching to respect rate limits
@@ -181,5 +237,7 @@ if __name__ == "__main__":
     p.add_argument("--workers", type=int, default=4, help="concurrent worker threads")
     p.add_argument("--max_queue", type=int, default=200, help="max pending futures before throttling")
     p.add_argument("--max_tokens", type=int, default=200)
+    p.add_argument("--n-max", type=int, help="maximum number of input paragraphs to submit")
+    p.add_argument("--ssl-cert", help="path to a CA bundle to use for HTTPS verification")
     args = p.parse_args()
     main(args)
