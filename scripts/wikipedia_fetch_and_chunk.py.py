@@ -12,18 +12,53 @@ Requirements:
 """
 
 import argparse
-import requests
-import json
 import gzip
+import json
+import ssl
 import time
+
+import requests
+from requests.adapters import HTTPAdapter
 from tqdm import tqdm
 from nltk import sent_tokenize, download
 download('punkt')  # ensure punkt is available
 
 DEFAULT_WORD_TARGET = 250
+DEFAULT_USER_AGENT = "summarizer-uncertainty-ml/0.1 (research script; contact: local-dev)"
+
+
+class SSLContextAdapter(HTTPAdapter):
+    """Requests adapter that uses a caller-provided SSL context."""
+
+    def __init__(self, ssl_context: ssl.SSLContext) -> None:
+        self.ssl_context = ssl_context
+        super().__init__()
+
+    def init_poolmanager(self, *args, **kwargs):
+        kwargs["ssl_context"] = self.ssl_context
+        return super().init_poolmanager(*args, **kwargs)
+
+    def proxy_manager_for(self, *args, **kwargs):
+        kwargs["ssl_context"] = self.ssl_context
+        return super().proxy_manager_for(*args, **kwargs)
+
+
+def build_session(cert_path=None):
+    """Build a requests session, optionally using a custom CA bundle."""
+
+    session = requests.Session()
+    session.headers.update({"User-Agent": DEFAULT_USER_AGENT})
+    if cert_path:
+        ssl_context = ssl.create_default_context()
+        if hasattr(ssl, "VERIFY_X509_STRICT"):
+            ssl_context.verify_flags &= ~ssl.VERIFY_X509_STRICT
+        ssl_context.load_verify_locations(cafile=cert_path)
+        adapter = SSLContextAdapter(ssl_context)
+        session.mount("https://", adapter)
+    return session
 
 def fetch_wikipedia_extract(title, session=None, retries=3, wait=1.0):
-    session = session or requests.Session()
+    session = session or build_session()
     params = {
         "action": "query",
         "prop": "extracts",
@@ -80,7 +115,7 @@ def read_titles_file(path):
                 yield t
 
 def main(args):
-    session = requests.Session()
+    session = build_session(cert_path=args.ssl_cert)
     out_f = gzip.open(args.out, "wt", encoding="utf-8") if args.out.endswith(".gz") else open(args.out, "w", encoding="utf-8")
     titles = list(read_titles_file(args.titles_file))
     for title in tqdm(titles, desc="titles"):
@@ -111,5 +146,6 @@ if __name__ == "__main__":
     p.add_argument("--titles-file", required=True, help="one Wikipedia title per line (e.g. 'Paris', 'Machine learning')")
     p.add_argument("--out", required=True, help="output JSONL path (use .gz to compress)")
     p.add_argument("--approx-words", type=int, default=DEFAULT_WORD_TARGET, help="target words per chunk")
+    p.add_argument("--ssl-cert", help="path to a CA bundle to use for HTTPS verification")
     args = p.parse_args()
     main(args)
