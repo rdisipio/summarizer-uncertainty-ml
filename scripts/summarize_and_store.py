@@ -3,7 +3,7 @@
 summarize_and_store.py
 - Read chunk JSONL produced by fetch_and_chunk.py
 - Call the OpenRouter chat completions API
-- Store structured results (summary sentences, raw response, prompt, metadata) to JSONL
+- Store structured results (summary sentences, raw response, metadata) to JSONL
 
 Usage:
     echo "OPENROUTER_API_KEY=..." > .env
@@ -172,7 +172,6 @@ def summarize_chunk(chunk_obj, model="openai/gpt-4o-mini", temperature=0.0, api_
         "source_url": chunk_obj.get("source_url"),
         "paragraph_idx": chunk_obj.get("paragraph_idx"),
         "paragraph_word_count": chunk_obj.get("paragraph_word_count"),
-        "prompt": prompt,
         "response_text_raw": text,
         "response_sentences": sentences,
         "provider_meta": provider_meta,
