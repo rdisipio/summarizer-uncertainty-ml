@@ -9,7 +9,7 @@ Any AI coding assistant must follow them by default.
 Environment
 -----------
 1. Use Pipenv for environment and dependency management.
-2. Target Python version must be **>= 3.11**.
+2. Target Python version must be **>= 3.13**.
 3. Do not introduce tools that replace Pipenv unless explicitly requested.
 
 Code Style and Quality
