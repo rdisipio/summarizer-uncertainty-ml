@@ -1,0 +1,26 @@
+[[source]]
+url = "https://pypi.org/simple"
+verify_ssl = true
+name = "pypi"
+
+[packages]
+backoff = "*"
+datasets = "*"
+fastapi = "*"
+nltk = "*"
+numpy = "*"
+openai = "*"
+peft = "*"
+requests = "*"
+scikit-learn = "*"
+scipy = "*"
+torch = "*"
+transformers = "*"
+tqdm = "*"
+uvicorn = "*"
+
+[dev-packages]
+pytest = "*"
+
+[requires]
+python_version = "3.13"
