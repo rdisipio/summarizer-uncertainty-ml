@@ -176,7 +176,7 @@ if __name__ == "__main__":
     p.add_argument("--infile", required=True, help="input chunks JSONL (gz ok)")
     p.add_argument("--outfile", required=True, help="output JSONL (gz ok)")
     p.add_argument("--model", default="openai/gpt-4o-mini")
-    p.add_argument("--temperature", type=float, default=0.0)
+    p.add_argument("--temperature", type=float, default=0.7)
     p.add_argument("--samples", type=int, default=1, help="number of sampled responses per chunk (varying temps by +0.2 increments)")
     p.add_argument("--workers", type=int, default=4, help="concurrent worker threads")
     p.add_argument("--max_queue", type=int, default=200, help="max pending futures before throttling")
