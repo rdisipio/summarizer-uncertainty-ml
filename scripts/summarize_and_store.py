@@ -3,14 +3,14 @@
 summarize_and_store.py
 - Read chunk JSONL produced by fetch_and_chunk.py
 - Call the OpenRouter chat completions API
-- Store structured results (summary sentences, raw response, metadata) to JSONL
+- Store compact paragraph summaries to JSONL
 
 Usage:
     echo "OPENROUTER_API_KEY=..." > .env
     python summarize_and_store.py --infile chunks.jsonl.gz --outfile summaries.jsonl.gz --model openai/gpt-4o-mini --samples 3 --temperature 0.2
 
 Requirements:
-    pip install requests tqdm backoff nltk python-dotenv
+    pip install requests tqdm backoff python-dotenv
 Notes:
     - Chat endpoints typically do NOT return token logprobs. If you need token logprobs, use completion endpoints that expose them.
     - The script loads OPENROUTER_API_KEY from a .env file in the project root.
@@ -28,7 +28,6 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 import backoff
 import requests
 from dotenv import load_dotenv
-from nltk import sent_tokenize
 from requests.adapters import HTTPAdapter
 from tqdm import tqdm
 
@@ -118,10 +117,9 @@ def call_openrouter_chat(prompt, model, temperature, max_tokens=256, api_key=Non
 # Prompting helpers
 # ----------------------------
 PROMPT_TEMPLATE = """Summarize the paragraph below in 2-3 concise factual sentences.
-Return JSON exactly in this format:
-{{"sentences": ["S1", "S2", ...]}}
+Return only the summary text and nothing else.
 
-Paragraph:
+Paragraph to summarize:
 {paragraph}
 """
 # ----------------------------
@@ -130,8 +128,6 @@ Paragraph:
 def summarize_chunk(chunk_obj, model="openai/gpt-4o-mini", temperature=0.0, api_key=None, max_tokens=200, session=None):
     paragraph = chunk_obj["paragraph_text"]
     prompt = PROMPT_TEMPLATE.format(paragraph=paragraph)
-    start = time.time()
-    raw = None
     try:
         raw = call_openrouter_chat(
             prompt,
@@ -143,42 +139,16 @@ def summarize_chunk(chunk_obj, model="openai/gpt-4o-mini", temperature=0.0, api_
         )
         choices = raw.get("choices") or []
         text = choices[0].get("message", {}).get("content", "").strip() if choices else ""
-        provider_meta = {"provider": "openrouter", "model": model}
     except Exception as e:
         return {"error": str(e), "id": chunk_obj["id"], "chunk_meta": chunk_obj}
-
-    latency_ms = int((time.time() - start) * 1000)
-
-    # Try to parse JSON from model output
-    sentences = []
-    parse_error = None
-    try:
-        parsed = json.loads(text)
-        sentences = parsed.get("sentences", [])
-    except Exception:
-        # fallback: simple sentence splitting heuristics
-        parse_error = "json_parse_failed"
-        # Very simple: split by newline then by sentence tokenizer
-        lines = [ln.strip() for ln in text.splitlines() if ln.strip()]
-        if lines:
-            # If the assistant returned a JSON-like or numbered list, try to extract quotes
-            # Otherwise, fallback to splitting the full text into sentences
-            joined = " ".join(lines)
-            sentences = sent_tokenize(joined)
 
     out = {
         "id": chunk_obj["id"],
         "page_title": chunk_obj.get("page_title"),
-        "source_url": chunk_obj.get("source_url"),
-        "paragraph_idx": chunk_obj.get("paragraph_idx"),
-        "paragraph_word_count": chunk_obj.get("paragraph_word_count"),
-        "response_text_raw": text,
-        "response_sentences": sentences,
-        "provider_meta": provider_meta,
-        "latency_ms": latency_ms,
+        "paragraph_text": paragraph,
+        "summary": text,
+        "model": model,
         "timestamp_utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-        "parse_error": parse_error,
-        "raw_api_response": raw
     }
     return out
 
