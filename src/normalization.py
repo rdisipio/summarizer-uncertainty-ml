@@ -35,6 +35,16 @@ class QuantileNormalizer:
         normalized_score = np.interp(raw_score, self.boundaries, quantile_positions)
         return float(np.clip(normalized_score, 0.0, 100.0))
 
+    def band(self, raw_score: float) -> str:
+        """Map a raw uncertainty value onto a coarse display band."""
+
+        normalized_score = self.normalize(raw_score)
+        if normalized_score < (100.0 / 3.0):
+            return "low"
+        if normalized_score < (200.0 / 3.0):
+            return "medium"
+        return "high"
+
 
 def load_quantile_normalizer(path: str | Path) -> QuantileNormalizer:
     """Load a normalizer from a JSON file containing ordered boundaries."""
@@ -48,4 +58,3 @@ def load_quantile_normalizer(path: str | Path) -> QuantileNormalizer:
         raise ValueError("Normalization config must contain a 'boundaries' list.")
 
     return QuantileNormalizer(boundaries=tuple(float(boundary) for boundary in boundaries))
-
