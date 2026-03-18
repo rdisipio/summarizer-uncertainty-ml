@@ -3,13 +3,14 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-import re
 from typing import Any, Protocol, Sequence
 
+from nltk.tokenize import sent_tokenize
 import numpy as np
 
+from .nltk_setup import ensure_sentence_tokenizer
 
-_SENTENCE_BOUNDARY_PATTERN = re.compile(r"(?<=[.!?])\s+")
+
 _EPSILON = 1e-12
 
 
@@ -326,17 +327,19 @@ class RuleBasedSentenceBackend:
 
 
 def split_sentences(text: str) -> tuple[str, ...]:
-    """Split summary text into sentences while preserving display order."""
+    """Split summary text into sentences with NLTK while preserving order."""
 
     stripped_text = text.strip()
     if not stripped_text:
         return tuple()
 
-    raw_sentences = _SENTENCE_BOUNDARY_PATTERN.split(stripped_text)
-    normalized_sentences = tuple(sentence.strip() for sentence in raw_sentences if sentence.strip())
-    if normalized_sentences:
-        return normalized_sentences
-    return (stripped_text,)
+    ensure_sentence_tokenizer(download=False)
+    raw_sentences = sent_tokenize(stripped_text)
+
+    normalized_sentences = tuple(
+        sentence.strip() for sentence in raw_sentences if sentence.strip()
+    )
+    return normalized_sentences or (stripped_text,)
 
 
 def align_sentences(summary: str, sentences: Sequence[str]) -> tuple[SentenceSpec, ...]:
