@@ -18,7 +18,7 @@ RUN pipenv install --system --deploy
 
 COPY src /app/src
 COPY config /app/config
-COPY README.md RULES.md WORKFLOW.md /app/
+COPY README.md AGENTS.md /app/
 
 RUN python -m src.nltk_setup
 
