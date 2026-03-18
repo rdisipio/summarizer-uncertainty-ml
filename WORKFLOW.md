@@ -12,7 +12,8 @@
 - The generator (LLM) is external / model-agnostic. We will _not_ rely on multiple generated summaries or clustering.
 - Uncertainty is epistemic and comes solely from sampling LoRA weights under a Laplace approximation.
 - Use PEFT/LoRA for cheap adapters. Fit Laplace on adapter parameters only.
-- Evaluate a displayed summary by *scoring the exact sentence tokens* under sampled adapter weights (teacher-forcing / label scoring) and aggregating token-level variance into a sentence score.
+- Evaluate a displayed summary by *scoring the exact sentence tokens* under sampled adapter weights (teacher-forcing / label scoring), preserving the summary prefix that precedes each sentence.
+- Inference is a post-hoc scoring pass over an existing summary, not a re-generation step.
 
 ---
 
@@ -82,7 +83,7 @@ API response:
 ```json
 {
   "sentence_results": [
-    {"sentence_index": 0, "uncertainty": 0.31, "mean_logprob": -1.24, "var_prob": 0.0023},
+    {"sentence_index": 0, "uncertainty": 0.31, "mean_logprob": -1.24, "epistemic_mi": 0.028, "predictive_entropy": 1.44},
     ...
   ]
 }
@@ -144,28 +145,46 @@ Key points:
 
 ## 8. Scoring logic (scorer.py)
 
-**Function:** `score_sentence(source, sentence, S=40)` -> returns per-token and aggregated per-sentence stats.
+**Function:** `score_summary(source, summary, sentences=None, S=40)` -> returns per-token and aggregated per-sentence stats.
 
 Algorithm:
-1. Tokenize `source` and `sentence` into `inputs` and `labels` (shifted decoder inputs as needed).
-2. For `s` in `1..S`:
+1. Split `summary` into sentences if `sentences` is not provided.
+2. Tokenize `source` once for the encoder.
+3. Tokenize the full `summary` once and maintain a mapping from each sentence to its decoder token span.
+4. For each sentence `i`, score its tokens **with the preceding summary tokens as decoder prefix context**:
+   - decoder prefix = all summary tokens before sentence `i`
+   - labels = tokens belonging to sentence `i`
+   - do **not** score the sentence in isolation unless running an ablation
+5. For `s` in `1..S`:
    - sample θ_s
    - inject θ_s into model
-   - run model forward with `labels` to compute per-token log-probs under teacher-forcing (no beam search)
-   - store per-token log-probs (or probabilities)
-3. After S runs, compute per-token mean probability and variance. Convert to per-sentence score, e.g. `sent_var = mean(token_var)` and `mean_logprob = mean(mean_logprob_tokens)`.
-4. Return structured stats for each sentence.
+   - run model forward with teacher forcing over the decoder prefix + sentence tokens
+   - store token-level logits or log-probs for the sentence-token positions only
+6. After `S` runs, compute per-token predictive statistics across posterior samples:
+   - mean log-prob
+   - predictive entropy
+   - expected entropy
+   - epistemic mutual information `MI = predictive_entropy - expected_entropy`
+7. Aggregate token-level uncertainty to a sentence score:
+   - default: `sentence_uncertainty = mean(token_mi)`
+   - robust option: mean of top-k token MI values to avoid washing out a localized uncertain phrase
+8. Return structured stats for each sentence.
 
 **Performance tips**:
 - Use `torch.no_grad()` for scoring.
 - Use FP16 if supported.
 - Batch multiple samples per forward if memory allows by stacking model copies? (Prefer in-place injection loop to avoid memory blowup.)
+- Reuse tokenized encoder inputs and full-summary decoder inputs across all sentence spans within the same request.
+
+**Why summary-prefix scoring matters**:
+- Seq2seq summarizers are trained autoregressively. The probability of sentence `i` depends on earlier decoder tokens, so uncertainty for sentence `i` should be measured conditional on the already displayed summary prefix.
+- Scoring each sentence independently would confound epistemic uncertainty with an artificial context mismatch introduced at inference time.
 
 ---
 
 ## 9. Calibration (optional but recommended)
 
-Collect a small human-labeled calibration set. Fit a monotonic regressor (isotonic regression or simple linear scaling) that maps raw `sent_var` or composite features to a human `uncertainty` label (0..1). Save scaler model and apply at inference.
+Collect a small human-labeled calibration set. Fit a monotonic regressor (isotonic regression or simple linear scaling) that maps raw epistemic features such as sentence-level `mean_token_mi`, `topk_token_mi`, or `mean_logprob` to a human `uncertainty` label (0..1). Save scaler model and apply at inference.
 
 ---
 
@@ -177,7 +196,7 @@ Expose endpoints:
 Endpoint behavior:
 - If `sentences` omitted, server splits `summary` into sentence tokens using a simple sentencizer.
 - The server loads base model + LoRA MAP + Laplace posterior on startup to avoid re-loading per request.
-- For each request, run `scorer.score_sentence` S times and return aggregated results.
+- For each request, run `scorer.score_summary` across the summary sentence spans and return aggregated results.
 
 Concurrency: set `max_workers` small; scoring is compute-heavy — consider a queue or rate-limiting.
 
@@ -194,7 +213,7 @@ Concurrency: set `max_workers` small; scoring is compute-heavy — consider a qu
 ## 12. Metrics & validation
 
 - Basic sanity: per-token mean logprob should be finite and reasonable (e.g., not all -inf).
-- Variance stability: increasing S should reduce estimator noise. Validate by checking variance converges.
+- Posterior disagreement stability: increasing S should reduce estimator noise. Validate that sentence-level MI or entropy estimates converge.
 - Correlation with human calibration set: Spearman correlation between calibrated score and human label.
 - Calibration metrics: RMSE and ECE after mapping.
 
@@ -203,8 +222,8 @@ Concurrency: set `max_workers` small; scoring is compute-heavy — consider a qu
 ## 13. Deployment notes
 
 - Save artifacts: base model id, LoRA MAP checkpoint, Laplace diag (`theta_hat`, `var_diag`), calibration scaler.
-- For low-latency production, consider lowering S (20) or precomputing sample injections for frequent sentences.
-- Optionally, expose a batch endpoint to score many sentences in one forward batch to amortize overhead.
+- For low-latency production, consider lowering S (20) or caching pre-tokenized request artifacts.
+- Optionally, expose a batch endpoint to score many summaries in one request to amortize encoder work.
 
 ---
 
@@ -214,7 +233,7 @@ Concurrency: set `max_workers` small; scoring is compute-heavy — consider a qu
 2. Implement `train.py` to produce LoRA MAP adapter checkpoint and a flat-parameter dump + name/shape map.
 3. Implement `laplace.py` (diagonal Laplace) using squared-gradient Fisher estimator.
 4. Implement `sampler.py` with `LaplacePosterior` and `inject_params`.
-5. Implement `scorer.py` that performs S-sample scoring and outputs per-sentence stats.
+5. Implement `scorer.py` that performs summary-prefix-aware S-sample scoring and outputs per-sentence stats.
 6. Implement `api_server.py` wrapping scorer and adding endpoints + simple rate limiting.
 7. Add tests in `tests/` and a brief notebook demo in `notebooks/`.
 
@@ -233,9 +252,9 @@ Concurrency: set `max_workers` small; scoring is compute-heavy — consider a qu
 - Use `peft`'s saved adapter named parameters to build the flat parameter vector (flatten and concatenate `A` and `B` matrices in a deterministic order).
 - For diagonal fisher, compute `E[g^2]` by running a held-out batch in training mode and accumulating squared gradients per adapter parameter, average across examples.
 - Damping `λ` is important: try `1e-3` then tune.
+- Keep the sentence-to-token-span mapping explicit so that decoder-prefix conditioning is reproducible and testable.
 - If you later want richer posteriors, replace diagonal Laplace by block-K-FAC; keep `LaplacePosterior` API identical.
 
 ---
 
 *End of workflow.md*
-
