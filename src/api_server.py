@@ -167,6 +167,7 @@ def _serialize_summary_score(
         raw_uncertainty = float(sentence_result["uncertainty"])
         sentence_result["uncertainty_raw"] = raw_uncertainty
         sentence_result["uncertainty_score"] = normalizer.normalize(raw_uncertainty)
+        sentence_result["uncertainty_band"] = normalizer.band(raw_uncertainty)
 
     return payload
 
