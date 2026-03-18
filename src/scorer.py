@@ -190,7 +190,7 @@ class SummaryUncertaintyScorer:
         }
 
         for sample_index in range(sample_count):
-            sample_seed = None if seed is None else seed + sample_index
+            sample_seed = sample_index if seed is None else seed + sample_index
             posterior_sample = self._posterior_sampler.sample(seed=sample_seed)
             sentence_distributions = self._backend.score_posterior_sample(
                 prepared_summary=prepared_summary,
@@ -299,7 +299,6 @@ class RuleBasedSentenceBackend:
     ) -> PreparedSummary:
         """Build a prepared summary object from raw text."""
 
-        del source
         sentence_texts = tuple(sentences) if sentences is not None else split_sentences(summary)
         sentence_specs = tuple(
             align_sentences(summary=summary, sentences=sentence_texts)
