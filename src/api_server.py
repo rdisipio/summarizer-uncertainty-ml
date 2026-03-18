@@ -4,12 +4,14 @@ from __future__ import annotations
 
 from contextlib import asynccontextmanager
 import os
+from pathlib import Path
 from typing import Any, Protocol, Sequence
 
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, Field, field_validator
 
 from .dummy_backend import build_dummy_scorer
+from .normalization import QuantileNormalizer, load_quantile_normalizer
 from .scorer import SummaryScore
 
 
@@ -60,6 +62,7 @@ class HealthResponse(BaseModel):
 def create_app(
     scoring_service: ScoringService,
     *,
+    normalizer: QuantileNormalizer,
     title: str = "Summary Uncertainty API",
 ) -> FastAPI:
     """Create the FastAPI application with an injected scoring service."""
@@ -67,6 +70,7 @@ def create_app(
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> Any:
         app.state.scoring_service = scoring_service
+        app.state.normalizer = normalizer
         yield
 
     app = FastAPI(title=title, lifespan=lifespan)
@@ -97,7 +101,7 @@ def create_app(
         except Exception as error:
             raise HTTPException(status_code=500, detail=str(error)) from error
 
-        return result.to_dict()
+        return _serialize_summary_score(result, app.state.normalizer)
 
     return app
 
@@ -139,4 +143,35 @@ def _build_default_service() -> ScoringService:
     raise RuntimeError(f"Unsupported SCORING_BACKEND value: {backend_name}")
 
 
-app = create_app(_build_default_service())
+def _build_default_normalizer() -> QuantileNormalizer:
+    """Load the configured uncertainty normalizer."""
+
+    default_path = Path(__file__).resolve().parent.parent / "config" / "uncertainty_quantiles.json"
+    config_path = os.environ.get(
+        "QUANTILE_CONFIG_PATH",
+        str(default_path),
+    )
+    return load_quantile_normalizer(config_path)
+
+
+def _serialize_summary_score(
+    summary_score: SummaryScore,
+    normalizer: QuantileNormalizer,
+) -> dict[str, Any]:
+    """Serialize a summary score and attach display-oriented uncertainty values."""
+
+    payload = summary_score.to_dict()
+    payload["normalization"] = {"boundaries": list(normalizer.boundaries)}
+
+    for sentence_result in payload["sentence_results"]:
+        raw_uncertainty = float(sentence_result["uncertainty"])
+        sentence_result["uncertainty_raw"] = raw_uncertainty
+        sentence_result["uncertainty_score"] = normalizer.normalize(raw_uncertainty)
+
+    return payload
+
+
+app = create_app(
+    _build_default_service(),
+    normalizer=_build_default_normalizer(),
+)
