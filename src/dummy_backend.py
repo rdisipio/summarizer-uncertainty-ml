@@ -14,7 +14,6 @@ from .scorer import (
     PreparedSummary,
     RuleBasedSentenceBackend,
     SampledSentenceDistributions,
-    SummaryScoringBackend,
     SummaryUncertaintyScorer,
 )
 
@@ -161,29 +160,42 @@ def _token_distribution(
 ) -> np.ndarray:
     """Return a deterministic pseudo-posterior token distribution."""
 
-    distribution = np.full(_VOCAB_SIZE, 0.4 / (_VOCAB_SIZE - 1), dtype=np.float64)
+    distribution = np.full(_VOCAB_SIZE, 0.0, dtype=np.float64)
 
-    base_confidence = 0.72
+    base_confidence = 0.78
     ambiguity_boost = _ambiguity_boost(token=token, sentence=sentence)
     source_overlap_boost = _source_overlap_boost(token=token, source=source)
-    sample_variation = _sample_variation(token=token, sample_index=sample_index)
-
-    target_probability = base_confidence - ambiguity_boost + source_overlap_boost + sample_variation
-    target_probability = float(np.clip(target_probability, 0.18, 0.92))
-    distribution[token_id] = target_probability
+    is_ambiguous = ambiguity_boost >= 0.12
+    if is_ambiguous:
+        target_probability = 0.78 if sample_index % 2 == 0 else 0.32
+    else:
+        sample_variation = _sample_variation(token=token, sample_index=sample_index)
+        target_probability = (
+            base_confidence - ambiguity_boost + source_overlap_boost - sample_variation
+        )
+        target_probability = float(np.clip(target_probability, 0.2, 0.94))
 
     remaining_mass = 1.0 - target_probability
     if remaining_mass <= 0.0:
+        distribution[token_id] = 1.0
         return distribution
 
     non_target_indices = [index for index in range(_VOCAB_SIZE) if index != token_id]
-    focus_index = _alternative_focus_index(token=token, sample_index=sample_index, token_id=token_id)
-    focus_probability = min(remaining_mass * 0.35, 0.2)
-    per_token_probability = (remaining_mass - focus_probability) / (len(non_target_indices) - 1)
+    focus_index = _alternative_focus_index(
+        token=token,
+        sample_index=sample_index,
+        token_id=token_id,
+    )
+    focus_probability = min(
+        remaining_mass * (0.75 if is_ambiguous else 0.35 + ambiguity_boost),
+        remaining_mass * 0.85,
+    )
+    background_probability = (remaining_mass - focus_probability) / (len(non_target_indices) - 1)
 
     for index in non_target_indices:
-        distribution[index] = per_token_probability
+        distribution[index] = background_probability
     distribution[focus_index] = focus_probability
+    distribution[token_id] = target_probability
     return distribution
 
 
@@ -215,15 +227,19 @@ def _sample_variation(*, token: str, sample_index: int) -> float:
 
     digest = hashlib.sha256(f"{token}:{sample_index}".encode("utf-8")).digest()
     raw_value = int.from_bytes(digest[:2], byteorder="big") / 65535.0
-    return (raw_value - 0.5) * 0.12
+    return (raw_value - 0.5) * 0.16
 
 
 def _alternative_focus_index(*, token: str, sample_index: int, token_id: int) -> int:
     """Select a stable competing token id for non-target mass."""
 
-    digest = hashlib.sha256(f"alt:{token}:{sample_index}".encode("utf-8")).digest()
-    candidate = int.from_bytes(digest[:2], byteorder="big") % _VOCAB_SIZE
+    digest = hashlib.sha256(f"alt:{token}".encode("utf-8")).digest()
+    candidate_offsets = (
+        int.from_bytes(digest[:2], byteorder="big") % 7 + 1,
+        int.from_bytes(digest[2:4], byteorder="big") % 11 + 8,
+        int.from_bytes(digest[4:6], byteorder="big") % 13 + 20,
+    )
+    candidate = (token_id + candidate_offsets[sample_index % len(candidate_offsets)]) % _VOCAB_SIZE
     if candidate == token_id:
         return (candidate + 1) % _VOCAB_SIZE
     return candidate
-
