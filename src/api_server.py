@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 from contextlib import asynccontextmanager
+import os
 from typing import Any, Protocol, Sequence
 
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, Field, field_validator
 
+from .dummy_backend import build_dummy_scorer
 from .scorer import SummaryScore
 
 
@@ -126,4 +128,15 @@ class UnconfiguredScoringService:
         )
 
 
-app = create_app(UnconfiguredScoringService())
+def _build_default_service() -> ScoringService:
+    """Build the default scoring service from environment configuration."""
+
+    backend_name = os.environ.get("SCORING_BACKEND", "dummy").strip().lower()
+    if backend_name == "dummy":
+        return build_dummy_scorer()
+    if backend_name == "unconfigured":
+        return UnconfiguredScoringService()
+    raise RuntimeError(f"Unsupported SCORING_BACKEND value: {backend_name}")
+
+
+app = create_app(_build_default_service())
