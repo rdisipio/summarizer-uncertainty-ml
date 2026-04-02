@@ -20,8 +20,12 @@ Suggested module responsibilities:
 - `train.py`: LoRA training pipeline
 - `laplace.py`: Laplace fitting utilities
 - `sampler.py`: posterior sampling and adapter injection
-- `scorer.py`: token and sentence scoring
-- `api_server.py`: REST API for scoring requests
+- `scorer.py`: token and sentence scoring (exists)
+- `api_server.py`: REST API for scoring requests (exists)
+- `dummy_backend.py`: dummy inference backend for smoke tests before model training (exists)
+- `normalization.py`: quantile-based mapping from raw uncertainty to display scores (exists)
+- `nltk_setup.py`: NLTK resource provisioning for sentence tokenization (exists)
+- `main.py`: server entrypoint for local and container execution (exists)
 - `utils.py`: tokenization and model-loading helpers
 - `config.py`: hyperparameters and constants
 
@@ -73,10 +77,7 @@ Suggested module responsibilities:
 - Treat inference as compute-heavy and avoid unbounded concurrency.
 
 ## Source Material
-- [`README.md`](/Users/disipio/development/summarizer-uncertainty-ml/README.md): brief repository description
-- [`WORKFLOW.md`](/Users/disipio/development/summarizer-uncertainty-ml/WORKFLOW.md): product and architecture guidance
-- [`RULES.md`](/Users/disipio/development/summarizer-uncertainty-ml/RULES.md): coding and assistant behavior rules
+- [`README.md`](/Users/disipio/development/summarizer-uncertainty-ml/README.md): brief repository description and usage examples
 
 ## Maintenance
-- Keep this file aligned with the intent of [`WORKFLOW.md`](/Users/disipio/development/summarizer-uncertainty-ml/WORKFLOW.md) and [`RULES.md`](/Users/disipio/development/summarizer-uncertainty-ml/RULES.md).
-- Do not edit [`RULES.md`](/Users/disipio/development/summarizer-uncertainty-ml/RULES.md) unless explicitly requested.
+- Keep this file aligned with the actual module layout under `src/` and the intent of `README.md`.
