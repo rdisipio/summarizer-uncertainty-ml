@@ -7,7 +7,7 @@ ENV PIPENV_VENV_IN_PROJECT=0
 ENV NLTK_DATA=/usr/local/share/nltk_data
 ENV SCORING_BACKEND=dummy
 ENV QUANTILE_CONFIG_PATH=/app/config/uncertainty_quantiles.json
-ENV PORT=8000
+ENV PORT=7860
 
 WORKDIR /app
 
@@ -22,6 +22,9 @@ COPY README.md AGENTS.md /app/
 
 RUN python -m src.nltk_setup
 
-EXPOSE 8000
+RUN useradd -m -u 1000 appuser && chown -R appuser /app
+USER appuser
+
+EXPOSE 7860
 
 CMD ["python", "-m", "src.main"]
