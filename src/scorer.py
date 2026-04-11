@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+import logging
 from typing import Any, Protocol, Sequence
 
 from nltk.tokenize import sent_tokenize
@@ -12,6 +13,7 @@ from .nltk_setup import ensure_sentence_tokenizer
 
 
 _EPSILON = 1e-12
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -175,6 +177,7 @@ class SummaryUncertaintyScorer:
 
         if sample_count <= 0:
             raise ValueError("sample_count must be positive.")
+        logger.info("Scoring summary: %d posterior sample(s) requested", sample_count)
 
         prepared_summary = self._backend.prepare_summary(source, summary, sentences)
         if not prepared_summary.sentences:
