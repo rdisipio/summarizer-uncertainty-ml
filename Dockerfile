@@ -16,6 +16,11 @@ RUN pip install --no-cache-dir pipenv
 COPY Pipfile Pipfile.lock /app/
 RUN pipenv install --system --deploy
 
+# PyPI ships the CUDA-enabled torch wheel by default.  HuggingFace Spaces
+# CPU instances have no CUDA libraries, so we reinstall from the CPU-only
+# index to avoid the libcudart / libcublasLt load failure at startup.
+RUN pip install --no-cache-dir torch --index-url https://download.pytorch.org/whl/cpu
+
 COPY src /app/src
 COPY config /app/config
 COPY README.md AGENTS.md /app/
