@@ -75,6 +75,27 @@ def create_app(
 
     app = FastAPI(title=title, lifespan=lifespan)
 
+    @app.get("/")
+    async def root() -> dict[str, Any]:
+        """Return a brief description of the service and its endpoints."""
+
+        return {
+            "service": title,
+            "description": (
+                "Estimates per-sentence epistemic uncertainty for a given "
+                "source text and its summary."
+            ),
+            "endpoints": {
+                "GET /health": "Liveness check.",
+                "POST /score": (
+                    "Score a summary. Required fields: source (str), summary (str). "
+                    "Optional: sample_count (int, 1-100), sentences (list[str]), "
+                    "top_k_tokens (int), seed (int)."
+                ),
+            },
+            "docs": "/docs",
+        }
+
     @app.get("/health", response_model=HealthResponse)
     async def health() -> HealthResponse:
         """Return API liveness information."""
