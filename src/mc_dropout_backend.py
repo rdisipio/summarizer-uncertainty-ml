@@ -18,8 +18,11 @@ Consider reducing sample_count if you run into memory pressure.
 
 from __future__ import annotations
 
+import logging
 import os
 from typing import Sequence
+
+logger = logging.getLogger(__name__)
 
 import numpy as np
 import torch
@@ -71,11 +74,13 @@ class MCDropoutBackend(RuleBasedSentenceBackend):
         if device is None:
             device = "cuda" if torch.cuda.is_available() else "cpu"
         self._device = device
+        logger.info("Loading tokenizer and model %r on device %r", model_name, device)
         self._tokenizer = AutoTokenizer.from_pretrained(model_name)
         self._model = AutoModelForSeq2SeqLM.from_pretrained(model_name)
         self._model.to(self._device)
         # train() activates dropout; gradients are still disabled per forward pass
         self._model.train()
+        logger.info("Model ready (%d parameters)", sum(p.numel() for p in self._model.parameters()))
 
     def prepare_summary(
         self,
@@ -91,6 +96,11 @@ class MCDropoutBackend(RuleBasedSentenceBackend):
         can slice the logit tensor per sentence without re-tokenizing.
         """
 
+        logger.info(
+            "Preparing summary: %d source chars, %d summary chars",
+            len(source),
+            len(summary),
+        )
         prepared = super().prepare_summary(source, summary, sentences)
 
         max_length = self._tokenizer.model_max_length
@@ -188,6 +198,7 @@ class MCDropoutBackend(RuleBasedSentenceBackend):
             "sentence_token_slices"
         ]
 
+        logger.debug("Forward pass: sample seed=%s", posterior_sample)
         if posterior_sample is not None:
             torch.manual_seed(posterior_sample)
 
