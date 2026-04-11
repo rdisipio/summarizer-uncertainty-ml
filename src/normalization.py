@@ -14,6 +14,8 @@ class QuantileNormalizer:
     """Map a non-negative raw uncertainty score onto a 0..100 display scale."""
 
     boundaries: tuple[float, ...]
+    low_max: float = 20.0
+    high_low: float = 50.0
 
     def __post_init__(self) -> None:
         if len(self.boundaries) < 2:
@@ -39,10 +41,10 @@ class QuantileNormalizer:
         """Map a raw uncertainty value onto a coarse display band."""
 
         normalized_score = self.normalize(raw_score)
-        if normalized_score < (100.0 / 3.0):
+        if normalized_score < self.low_max:
             return "low"
-        if normalized_score < (200.0 / 3.0):
-            return "medium"
+        if normalized_score < self.high_low:
+            return "mid"
         return "high"
 
 

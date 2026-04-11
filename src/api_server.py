@@ -181,14 +181,19 @@ def _build_default_service() -> ScoringService:
 
 
 def _build_default_normalizer() -> QuantileNormalizer:
-    """Load the configured uncertainty normalizer."""
+    """Load the configured uncertainty normalizer.
+
+    Band thresholds (on the 0-100 normalized scale) are configurable via:
+    - UNCERTAINTY_BAND_LOW_MAX  (default 20)
+    - UNCERTAINTY_BAND_HIGH_LOW (default 50)
+    """
 
     default_path = Path(__file__).resolve().parent.parent / "config" / "uncertainty_quantiles.json"
-    config_path = os.environ.get(
-        "QUANTILE_CONFIG_PATH",
-        str(default_path),
-    )
-    return load_quantile_normalizer(config_path)
+    config_path = os.environ.get("QUANTILE_CONFIG_PATH", str(default_path))
+    normalizer = load_quantile_normalizer(config_path)
+    low_max = float(os.environ.get("UNCERTAINTY_BAND_LOW_MAX", "20"))
+    high_low = float(os.environ.get("UNCERTAINTY_BAND_HIGH_LOW", "50"))
+    return QuantileNormalizer(boundaries=normalizer.boundaries, low_max=low_max, high_low=high_low)
 
 
 def _serialize_summary_score(
