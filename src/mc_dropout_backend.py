@@ -102,10 +102,12 @@ class MCDropoutBackend(RuleBasedSentenceBackend):
             len(summary),
         )
         prepared = super().prepare_summary(source, summary, sentences)
+        logger.info("%d sentence(s) identified", len(prepared.sentences))
 
         max_length = self._tokenizer.model_max_length
 
         # Encode the source text for the encoder stack.
+        logger.info("Tokenizing source (max_length=%d)", max_length)
         encoder_encoding = self._tokenizer(
             source,
             return_tensors="pt",
@@ -114,9 +116,11 @@ class MCDropoutBackend(RuleBasedSentenceBackend):
         )
         encoder_input_ids = encoder_encoding["input_ids"].to(self._device)
         encoder_attention_mask = encoder_encoding["attention_mask"].to(self._device)
+        logger.info("Source tokenized: %d tokens", encoder_input_ids.shape[1])
 
         # Encode the full summary without special tokens so that
         # return_offsets_mapping gives character spans relative to summary.
+        logger.info("Tokenizing summary")
         summary_encoding = self._tokenizer(
             summary,
             return_tensors="pt",
@@ -130,6 +134,7 @@ class MCDropoutBackend(RuleBasedSentenceBackend):
             summary_encoding["offset_mapping"][0].tolist()
         )
         summary_token_ids: list[int] = summary_token_ids_tensor.squeeze(0).tolist()
+        logger.info("Summary tokenized: %d tokens", len(summary_token_ids))
 
         # Map each sentence's character span to a contiguous slice of token indices.
         sentence_token_slices: dict[int, tuple[int, int]] = {}
@@ -147,9 +152,15 @@ class MCDropoutBackend(RuleBasedSentenceBackend):
                     "to any summary tokens.  The summary may have been truncated by "
                     "the tokenizer.  Try a shorter source or summary."
                 )
-            sentence_token_slices[sentence_spec.sentence_index] = (
-                token_indices[0],
-                token_indices[-1] + 1,
+            tok_start, tok_end = token_indices[0], token_indices[-1] + 1
+            sentence_token_slices[sentence_spec.sentence_index] = (tok_start, tok_end)
+            logger.info(
+                "Sentence %d aligned: tokens [%d, %d) (%d tokens) — %r",
+                sentence_spec.sentence_index,
+                tok_start,
+                tok_end,
+                tok_end - tok_start,
+                sentence_spec.text,
             )
 
         # Construct decoder input: [decoder_start_token] + summary_tokens.
@@ -162,6 +173,7 @@ class MCDropoutBackend(RuleBasedSentenceBackend):
             [decoder_start, summary_token_ids_tensor.to(self._device)],
             dim=1,
         )
+        logger.info("Decoder input ready: %d tokens (including BOS)", decoder_input_ids.shape[1])
 
         metadata = dict(prepared.metadata)
         metadata["encoder_input_ids"] = encoder_input_ids
