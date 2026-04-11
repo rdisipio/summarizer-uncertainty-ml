@@ -133,11 +133,27 @@ class UnconfiguredScoringService:
 
 
 def _build_default_service() -> ScoringService:
-    """Build the default scoring service from environment configuration."""
+    """Build the default scoring service from environment configuration.
+
+    Recognised SCORING_BACKEND values:
+    - ``dummy``       – rule-based mock, no model required (default)
+    - ``mc_dropout``  – teacher-forced MC Dropout over a HuggingFace seq2seq model
+    - ``unconfigured``– raises on every request (forces explicit wiring)
+
+    MC Dropout environment variables:
+    - ``MC_DROPOUT_MODEL``  – HuggingFace model identifier (default: facebook/bart-large-cnn)
+    - ``MC_DROPOUT_DEVICE`` – torch device string, e.g. ``cpu`` or ``cuda`` (auto-detected when unset)
+    """
 
     backend_name = os.environ.get("SCORING_BACKEND", "dummy").strip().lower()
     if backend_name == "dummy":
         return build_dummy_scorer()
+    if backend_name == "mc_dropout":
+        from .mc_dropout_backend import build_mc_dropout_scorer
+
+        model_name = os.environ.get("MC_DROPOUT_MODEL", "facebook/bart-large-cnn")
+        device = os.environ.get("MC_DROPOUT_DEVICE") or None
+        return build_mc_dropout_scorer(model_name=model_name, device=device)
     if backend_name == "unconfigured":
         return UnconfiguredScoringService()
     raise RuntimeError(f"Unsupported SCORING_BACKEND value: {backend_name}")
