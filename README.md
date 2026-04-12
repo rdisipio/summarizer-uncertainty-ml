@@ -42,7 +42,32 @@ Run the container and expose the API on port `8000`:
 docker run --rm -p 8000:8000 --name summarizer-uncertainty-ml summarizer-uncertainty-ml
 ```
 
-The current container defaults to the dummy scoring backend via `SCORING_BACKEND=dummy`.
+The backend is selected via the `SCORING_BACKEND` environment variable.
+
+## Scoring backends
+
+### `dummy` (default) — implemented
+
+A rule-based mock that produces deterministic pseudo-uncertainty scores without loading any model. Useful for smoke-testing the API and downstream consumers without GPU or network access.
+
+### `mc_dropout` — implemented
+
+Loads a pre-trained HuggingFace seq2seq model (default: `sshleifer/distilbart-cnn-12-6`) and scores the provided summary using Monte Carlo Dropout. The model is kept in training mode so dropout remains active, and `sample_count` independent forward passes are run with different dropout masks. Epistemic uncertainty per sentence is derived from the disagreement across passes (mutual information between predictions and model weights).
+
+Configure with:
+- `MC_DROPOUT_MODEL` — HuggingFace model identifier
+- `MC_DROPOUT_DEVICE` — torch device (`cpu`, `cuda`; auto-detected if unset)
+
+```bash
+docker run --rm -p 8000:8000 \
+  -e SCORING_BACKEND=mc_dropout \
+  -e MC_DROPOUT_MODEL=sshleifer/distilbart-cnn-12-6 \
+  summarizer-uncertainty-ml
+```
+
+### `laplace` — not yet implemented
+
+Will fine-tune a LoRA adapter on `(source, summary)` pairs, fit a Laplace approximation over the adapter weights, and draw posterior weight samples for each scoring request. This is the most principled approach: uncertainty will reflect genuine knowledge gaps relative to the training data rather than dropout noise.
 
 ## Example request
 
@@ -75,7 +100,7 @@ Expected response shape:
       "sentence_text": "OpenAI released a new summarization system.",
       "uncertainty": 0.12,
       "uncertainty_raw": 0.12,
-      "uncertainty_score": 0.21,
+      "uncertainty_score": 12.0,
       "uncertainty_band": "low"
     }
   ],
