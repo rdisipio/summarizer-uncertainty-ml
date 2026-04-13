@@ -37,7 +37,7 @@ from .scorer import (
 )
 
 
-_DEFAULT_MODEL = "facebook/bart-large-cnn"
+_DEFAULT_MODEL = "facebook/bart-large-xsum"
 
 
 class MCDropoutPosteriorSampler:

@@ -52,7 +52,7 @@ A rule-based mock that produces deterministic pseudo-uncertainty scores without 
 
 ### `mc_dropout` — implemented
 
-Loads a pre-trained HuggingFace seq2seq model (default: `sshleifer/distilbart-cnn-12-6`) and scores the provided summary using Monte Carlo Dropout. The model is kept in training mode so dropout remains active, and `sample_count` independent forward passes are run with different dropout masks. Epistemic uncertainty per sentence is derived from the disagreement across passes (mutual information between predictions and model weights).
+Loads a pre-trained HuggingFace seq2seq model (default: `facebook/bart-large-xsum`) and scores the provided summary using Monte Carlo Dropout. The model is kept in training mode so dropout remains active, and `sample_count` independent forward passes are run with different dropout masks. Epistemic uncertainty per sentence is derived from the disagreement across passes (mutual information between predictions and model weights).
 
 Configure with:
 - `MC_DROPOUT_MODEL` — HuggingFace model identifier
@@ -61,9 +61,11 @@ Configure with:
 ```bash
 docker run --rm -p 8000:8000 \
   -e SCORING_BACKEND=mc_dropout \
-  -e MC_DROPOUT_MODEL=sshleifer/distilbart-cnn-12-6 \
+  -e MC_DROPOUT_MODEL=facebook/bart-large-xsum \
   summarizer-uncertainty-ml
 ```
+
+**Caveat: scoring model bias toward formal style.** `sshleifer/distilbart-cnn-12-6` (and its parent `facebook/bart-large-cnn`) were fine-tuned on CNN/DailyMail news articles, so they expect formal, extractive summaries close to the source wording. When the summary uses informal vocabulary or paraphrases the source loosely, the model assigns low probability to those tokens under teacher-forcing — not because the content is wrong, but because the phrasing is unexpected given its training distribution. This inflates uncertainty scores for informal summaries relative to formal ones covering the same content. The effect is reduced when using the Laplace backend fine-tuned on your own data.
 
 ### `laplace` — not yet implemented
 
