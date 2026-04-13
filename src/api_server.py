@@ -39,8 +39,6 @@ class ScoreRequest(BaseModel):
     sample_count: int = Field(default=20, ge=1, le=100)
     top_k_tokens: int | None = Field(default=None, ge=1)
     seed: int | None = None
-    band_low_max: float = Field(default=20.0, ge=0.0, le=100.0)
-    band_high_low: float = Field(default=50.0, ge=0.0, le=100.0)
 
     @field_validator("sentences")
     @classmethod
@@ -124,7 +122,7 @@ def create_app(
         except Exception as error:
             raise HTTPException(status_code=500, detail=str(error)) from error
 
-        return _serialize_summary_score(result, app.state.normalizer, request.band_low_max, request.band_high_low)
+        return _serialize_summary_score(result, app.state.normalizer)
 
     return app
 
@@ -183,42 +181,27 @@ def _build_default_service() -> ScoringService:
 
 
 def _build_default_normalizer() -> QuantileNormalizer:
-    """Load the configured uncertainty normalizer.
-
-    Band thresholds (on the 0-100 normalized scale) are configurable via:
-    - UNCERTAINTY_BAND_LOW_MAX  (default 20)
-    - UNCERTAINTY_BAND_HIGH_LOW (default 50)
-    """
+    """Load the configured uncertainty normalizer."""
 
     default_path = Path(__file__).resolve().parent.parent / "config" / "uncertainty_quantiles.json"
     config_path = os.environ.get("QUANTILE_CONFIG_PATH", str(default_path))
-    normalizer = load_quantile_normalizer(config_path)
-    low_max = float(os.environ.get("UNCERTAINTY_BAND_LOW_MAX", "20"))
-    high_low = float(os.environ.get("UNCERTAINTY_BAND_HIGH_LOW", "50"))
-    return QuantileNormalizer(boundaries=normalizer.boundaries, low_max=low_max, high_low=high_low)
+    return load_quantile_normalizer(config_path)
 
 
 def _serialize_summary_score(
     summary_score: SummaryScore,
     normalizer: QuantileNormalizer,
-    band_low_max: float,
-    band_high_low: float,
 ) -> dict[str, Any]:
     """Serialize a summary score and attach display-oriented uncertainty values."""
 
-    effective_normalizer = QuantileNormalizer(
-        boundaries=normalizer.boundaries,
-        low_max=band_low_max,
-        high_low=band_high_low,
-    )
     payload = summary_score.to_dict()
     payload["normalization"] = {"boundaries": list(normalizer.boundaries)}
 
     for sentence_result in payload["sentence_results"]:
         raw_uncertainty = float(sentence_result["uncertainty"])
         sentence_result["uncertainty_raw"] = raw_uncertainty
-        sentence_result["uncertainty_score"] = effective_normalizer.normalize(raw_uncertainty)
-        sentence_result["uncertainty_band"] = effective_normalizer.band(raw_uncertainty)
+        sentence_result["uncertainty_score"] = normalizer.normalize(raw_uncertainty)
+        sentence_result["uncertainty_band"] = normalizer.band(raw_uncertainty)
 
     return payload
 
