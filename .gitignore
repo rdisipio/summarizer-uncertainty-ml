@@ -209,3 +209,4 @@ __marimo__/
 # Local model artifacts — stored on HuggingFace Hub (rdisipio/summarizer-uncertainty-models)
 models/
 data/
+*.npz
