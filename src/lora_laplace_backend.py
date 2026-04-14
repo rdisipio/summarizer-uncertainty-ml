@@ -580,7 +580,7 @@ def build_lora_laplace_scorer(
     base_model = AutoModelForSeq2SeqLM.from_pretrained(base_model_name)
 
     logger.info("Loading LoRA adapter from %r", peft_model_path)
-    peft_model = PeftModel.from_pretrained(base_model, peft_model_path)
+    peft_model = PeftModel.from_pretrained(base_model, peft_model_path, is_trainable=True)
 
     tokenizer = AutoTokenizer.from_pretrained(base_model_name)
 
