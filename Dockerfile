@@ -6,7 +6,7 @@ ENV PIP_NO_CACHE_DIR=1
 ENV PIPENV_VENV_IN_PROJECT=0
 ENV NLTK_DATA=/usr/local/share/nltk_data
 ENV SCORING_BACKEND=dummy
-ENV QUANTILE_CONFIG_PATH=/app/config/uncertainty_quantiles.json
+ENV QUANTILE_CONFIG_PATH=/app/config/uncertainty_quantiles_mc_dropout.json
 ENV PORT=7860
 
 WORKDIR /app

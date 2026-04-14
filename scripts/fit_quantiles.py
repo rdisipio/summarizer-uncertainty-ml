@@ -2,14 +2,16 @@
 """
 fit_quantiles.py
 
-Read sentence-level raw uncertainty scores produced by compute_uncertainty_scores.py,
-compute quantiles across all sentences, and write the boundaries to the normalizer
-config file (config/uncertainty_quantiles.json).
+Read sentence-level raw uncertainty scores produced by a compute_uncertainty_scores_*.py
+script, compute quantiles across all sentences, and write the boundaries to a normalizer
+config file.  The output path should reflect the backend used, e.g.:
+  config/uncertainty_quantiles_mc_dropout.json
+  config/uncertainty_quantiles_lora_laplace.json
 
 Usage:
     python scripts/fit_quantiles.py \
-        --infile data/uncertainty_scores.jsonl \
-        --outfile config/uncertainty_quantiles.json \
+        --infile data/uncertainty_scores_mc_dropout.jsonl \
+        --outfile config/uncertainty_quantiles_mc_dropout.json \
         --quantiles 0.0 0.25 0.5 0.75 1.0
 
 The default quantile points (0%, 25%, 50%, 75%, 100%) spread the 0-100 display
@@ -93,8 +95,8 @@ if __name__ == "__main__":
     p.add_argument("--infile", required=True, help="Input JSONL from compute_uncertainty_scores.py (gz ok)")
     p.add_argument(
         "--outfile",
-        default=str(Path(__file__).resolve().parent.parent / "config" / "uncertainty_quantiles.json"),
-        help="Output JSON config file (default: config/uncertainty_quantiles.json)",
+        required=True,
+        help="Output JSON config file — name should reflect the backend, e.g. config/uncertainty_quantiles_mc_dropout.json",
     )
     p.add_argument(
         "--quantiles",
