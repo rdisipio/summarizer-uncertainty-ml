@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 import logging
 import random
+import re
 from pathlib import Path
 from typing import Any
 
@@ -110,9 +111,11 @@ def build_lora_model(
         layers_to_transform: If set, only inject LoRA into these layer indices
             (0-based). E.g. ``[10, 11]`` for the last two decoder layers of a
             12-layer BART model.
-        layers_pattern: Regex pattern that must match the layer name for
-            ``layers_to_transform`` to apply. Use ``"decoder"`` to restrict
-            the layer filter to decoder layers only.
+        layers_pattern: Component of the module path that scopes the layer
+            filter, e.g. ``"decoder"`` to restrict to decoder layers only.
+            Combined with ``layers_to_transform`` to build a regex for
+            ``target_modules`` (avoids PEFT version incompatibilities with
+            the native ``layers_to_transform`` / ``layers_pattern`` API).
 
     Returns (peft_model, tokenizer).
     """
@@ -121,30 +124,33 @@ def build_lora_model(
 
     if target_modules is None:
         target_modules = ["q_proj", "v_proj"]
-
     if layers_to_transform is None:
         layers_to_transform = [10, 11]
     if layers_pattern is None:
         layers_pattern = "decoder"
 
+    # Build a regex that selects only the requested layers within the
+    # requested component (e.g. decoder layers 10 and 11).
+    # BART module paths look like:
+    #   model.decoder.layers.10.self_attn.q_proj
+    #   model.decoder.layers.11.encoder_attn.v_proj
+    layer_alts = "|".join(str(l) for l in layers_to_transform)
+    module_alts = "|".join(re.escape(m) for m in target_modules)
+    computed_target = rf".*{re.escape(layers_pattern)}\.layers\.({layer_alts})\.\w+\.({module_alts})$"
+    logger.info("LoRA target regex: %s", computed_target)
+
     logger.info("Loading base model %r", model_name)
     base_model = AutoModelForSeq2SeqLM.from_pretrained(model_name)
     tokenizer = AutoTokenizer.from_pretrained(model_name)
 
-    lora_kwargs: dict = dict(
+    lora_config = LoraConfig(
         task_type=TaskType.SEQ_2_SEQ_LM,
         r=lora_rank,
         lora_alpha=lora_alpha,
         lora_dropout=lora_dropout,
-        target_modules=target_modules,
+        target_modules=computed_target,
         bias="none",
     )
-    if layers_to_transform is not None:
-        lora_kwargs["layers_to_transform"] = layers_to_transform
-    if layers_pattern is not None:
-        lora_kwargs["layers_pattern"] = layers_pattern
-
-    lora_config = LoraConfig(**lora_kwargs)
     peft_model = get_peft_model(base_model, lora_config)
     peft_model.print_trainable_parameters()
     return peft_model, tokenizer
