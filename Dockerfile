@@ -5,8 +5,11 @@ ENV PYTHONUNBUFFERED=1
 ENV PIP_NO_CACHE_DIR=1
 ENV PIPENV_VENV_IN_PROJECT=0
 ENV NLTK_DATA=/usr/local/share/nltk_data
-ENV SCORING_BACKEND=dummy
-ENV QUANTILE_CONFIG_PATH=/app/config/uncertainty_quantiles_mc_dropout.json
+ENV SCORING_BACKEND=lora_laplace
+ENV LORA_BASE_MODEL=facebook/bart-large-xsum
+ENV LORA_ADAPTER_PATH=/app/models/bart-large-xsum-lora
+ENV LORA_SAMPLER_PATH=/app/models/bart-large-xsum-lora/laplace_sampler.npz
+ENV QUANTILE_CONFIG_PATH=/app/config/uncertainty_quantiles_lora_laplace.json
 ENV PORT=7860
 
 WORKDIR /app
@@ -23,6 +26,7 @@ RUN pip install --no-cache-dir torch --index-url https://download.pytorch.org/wh
 
 COPY src /app/src
 COPY config /app/config
+COPY models /app/models
 COPY README.md AGENTS.md /app/
 
 RUN python -m src.nltk_setup

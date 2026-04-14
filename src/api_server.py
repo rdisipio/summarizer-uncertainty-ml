@@ -157,13 +157,21 @@ def _build_default_service() -> ScoringService:
     """Build the default scoring service from environment configuration.
 
     Recognised SCORING_BACKEND values:
-    - ``dummy``       – rule-based mock, no model required (default)
-    - ``mc_dropout``  – teacher-forced MC Dropout over a HuggingFace seq2seq model
-    - ``unconfigured``– raises on every request (forces explicit wiring)
+    - ``dummy``        – rule-based mock, no model required (default)
+    - ``mc_dropout``   – teacher-forced MC Dropout over a HuggingFace seq2seq model
+    - ``lora_laplace`` – LoRA + diagonal Laplace approximation
+    - ``unconfigured`` – raises on every request (forces explicit wiring)
 
     MC Dropout environment variables:
     - ``MC_DROPOUT_MODEL``  – HuggingFace model identifier (default: facebook/bart-large-cnn)
     - ``MC_DROPOUT_DEVICE`` – torch device string, e.g. ``cpu`` or ``cuda`` (auto-detected when unset)
+
+    LoRA-Laplace environment variables:
+    - ``LORA_BASE_MODEL``   – HuggingFace base model identifier (default: facebook/bart-large-xsum)
+    - ``LORA_ADAPTER_PATH`` – path to the PEFT adapter checkpoint directory (required)
+    - ``LORA_SAMPLER_PATH`` – path to a pre-fitted laplace_sampler.npz (required);
+                              fit offline with compute_uncertainty_scores_lora_laplace.py --save-sampler
+    - ``LORA_DEVICE``       – torch device string (auto-detected when unset)
     """
 
     backend_name = os.environ.get("SCORING_BACKEND", "dummy").strip().lower()
@@ -175,6 +183,33 @@ def _build_default_service() -> ScoringService:
         model_name = os.environ.get("MC_DROPOUT_MODEL", "facebook/bart-large-cnn")
         device = os.environ.get("MC_DROPOUT_DEVICE") or None
         return build_mc_dropout_scorer(model_name=model_name, device=device)
+    if backend_name == "lora_laplace":
+        from peft import PeftModel
+        from transformers import AutoModelForSeq2SeqLM, AutoTokenizer
+
+        from .lora_laplace_backend import LoraLaplaceBackend, load_laplace_sampler
+        from .scorer import SummaryUncertaintyScorer
+
+        base_model_name = os.environ.get("LORA_BASE_MODEL", "facebook/bart-large-xsum")
+        adapter_path = os.environ.get("LORA_ADAPTER_PATH", "")
+        sampler_path = os.environ.get("LORA_SAMPLER_PATH", "")
+        device = os.environ.get("LORA_DEVICE") or None
+
+        if not adapter_path:
+            raise RuntimeError("LORA_ADAPTER_PATH must be set for the lora_laplace backend.")
+        if not sampler_path:
+            raise RuntimeError(
+                "LORA_SAMPLER_PATH must be set for the lora_laplace backend. "
+                "Fit the sampler offline with compute_uncertainty_scores_lora_laplace.py "
+                "--save-sampler and provide the resulting .npz path here."
+            )
+
+        base_model = AutoModelForSeq2SeqLM.from_pretrained(base_model_name)
+        peft_model = PeftModel.from_pretrained(base_model, adapter_path, is_trainable=True)
+        tokenizer = AutoTokenizer.from_pretrained(base_model_name)
+        backend = LoraLaplaceBackend(peft_model=peft_model, tokenizer=tokenizer, device=device)
+        sampler = load_laplace_sampler(sampler_path)
+        return SummaryUncertaintyScorer(backend=backend, posterior_sampler=sampler)
     if backend_name == "unconfigured":
         return UnconfiguredScoringService()
     raise RuntimeError(f"Unsupported SCORING_BACKEND value: {backend_name}")
