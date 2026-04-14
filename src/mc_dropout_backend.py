@@ -218,6 +218,7 @@ class MCDropoutBackend(RuleBasedSentenceBackend):
         logger.debug("Forward pass: sample seed=%s", posterior_sample)
         if posterior_sample is not None:
             torch.manual_seed(posterior_sample)
+            torch.cuda.manual_seed_all(posterior_sample)
 
         with torch.no_grad():
             outputs = self._model(
