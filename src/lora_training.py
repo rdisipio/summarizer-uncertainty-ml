@@ -101,8 +101,18 @@ def build_lora_model(
     lora_alpha: int = 16,
     lora_dropout: float = 0.1,
     target_modules: list[str] | None = None,
+    layers_to_transform: list[int] | None = None,
+    layers_pattern: str | None = None,
 ):
     """Load a seq2seq base model and wrap it with a LoRA adapter.
+
+    Args:
+        layers_to_transform: If set, only inject LoRA into these layer indices
+            (0-based). E.g. ``[10, 11]`` for the last two decoder layers of a
+            12-layer BART model.
+        layers_pattern: Regex pattern that must match the layer name for
+            ``layers_to_transform`` to apply. Use ``"decoder"`` to restrict
+            the layer filter to decoder layers only.
 
     Returns (peft_model, tokenizer).
     """
@@ -112,11 +122,16 @@ def build_lora_model(
     if target_modules is None:
         target_modules = ["q_proj", "v_proj"]
 
+    if layers_to_transform is None:
+        layers_to_transform = [10, 11]
+    if layers_pattern is None:
+        layers_pattern = "decoder"
+
     logger.info("Loading base model %r", model_name)
     base_model = AutoModelForSeq2SeqLM.from_pretrained(model_name)
     tokenizer = AutoTokenizer.from_pretrained(model_name)
 
-    lora_config = LoraConfig(
+    lora_kwargs: dict = dict(
         task_type=TaskType.SEQ_2_SEQ_LM,
         r=lora_rank,
         lora_alpha=lora_alpha,
@@ -124,6 +139,12 @@ def build_lora_model(
         target_modules=target_modules,
         bias="none",
     )
+    if layers_to_transform is not None:
+        lora_kwargs["layers_to_transform"] = layers_to_transform
+    if layers_pattern is not None:
+        lora_kwargs["layers_pattern"] = layers_pattern
+
+    lora_config = LoraConfig(**lora_kwargs)
     peft_model = get_peft_model(base_model, lora_config)
     peft_model.print_trainable_parameters()
     return peft_model, tokenizer

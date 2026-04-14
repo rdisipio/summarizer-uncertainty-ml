@@ -49,12 +49,18 @@ def main(args: argparse.Namespace) -> None:
     logger.info("Train: %d  Val: %d", len(train_pairs), len(val_pairs))
 
     target_modules = [m.strip() for m in args.lora_target_modules.split(",")]
+    layers_to_transform = (
+        [int(x) for x in args.lora_layers.split(",")]
+        if args.lora_layers else None
+    )
     model, tokenizer = build_lora_model(
         model_name=args.model,
         lora_rank=args.lora_rank,
         lora_alpha=args.lora_alpha,
         lora_dropout=args.lora_dropout,
         target_modules=target_modules,
+        layers_to_transform=layers_to_transform,
+        layers_pattern=args.lora_layers_pattern or None,
     )
 
     train_lora(
@@ -84,6 +90,10 @@ if __name__ == "__main__":
     p.add_argument("--lora-alpha", type=int, default=16)
     p.add_argument("--lora-dropout", type=float, default=0.1)
     p.add_argument("--lora-target-modules", default="q_proj,v_proj")
+    p.add_argument("--lora-layers", default="10,11",
+                   help="Comma-separated layer indices to inject LoRA into (e.g. '10,11')")
+    p.add_argument("--lora-layers-pattern", default="decoder",
+                   help="Layer name pattern filter for --lora-layers (e.g. 'decoder')")
     p.add_argument("--epochs", type=int, default=3)
     p.add_argument("--batch-size", type=int, default=4)
     p.add_argument("--grad-accum", type=int, default=4)
