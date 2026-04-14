@@ -183,7 +183,7 @@ def _build_default_service() -> ScoringService:
 def _build_default_normalizer() -> QuantileNormalizer:
     """Load the configured uncertainty normalizer."""
 
-    default_path = Path(__file__).resolve().parent.parent / "config" / "uncertainty_quantiles_bart-large-xsum.json"
+    default_path = Path(__file__).resolve().parent.parent / "config" / "uncertainty_quantiles.json"
     config_path = os.environ.get("QUANTILE_CONFIG_PATH", str(default_path))
     return load_quantile_normalizer(config_path)
 
