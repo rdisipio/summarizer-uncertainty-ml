@@ -216,19 +216,6 @@ def _build_default_service() -> ScoringService:
         import torch
 
         base_model = AutoModelForSeq2SeqLM.from_pretrained(base_model_name)
-        # Quantize before loading PEFT, but only on layers that won't receive
-        # LoRA adapters. LoRA targets are decoder layers 10 and 11 — quantize
-        # the encoder fully and all other decoder layers.
-        logger.info("Applying dynamic INT8 quantization (encoder + non-LoRA decoder layers)")
-        lora_decoder_layers = {10, 11}
-        base_model.model.encoder = torch.quantization.quantize_dynamic(
-            base_model.model.encoder, {torch.nn.Linear}, dtype=torch.qint8
-        )
-        for i, layer in enumerate(base_model.model.decoder.layers):
-            if i not in lora_decoder_layers:
-                base_model.model.decoder.layers[i] = torch.quantization.quantize_dynamic(
-                    layer, {torch.nn.Linear}, dtype=torch.qint8
-                )
         peft_model = PeftModel.from_pretrained(base_model, adapter_path, is_trainable=True)
         tokenizer = AutoTokenizer.from_pretrained(base_model_name)
         backend = LoraLaplaceBackend(peft_model=peft_model, tokenizer=tokenizer, device=device)
