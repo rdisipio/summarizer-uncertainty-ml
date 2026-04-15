@@ -208,5 +208,9 @@ __marimo__/
 
 # Local model artifacts — stored on HuggingFace Hub (rdisipio/summarizer-uncertainty-models)
 models/
-data/
 *.npz
+
+# Data files — large generated artifacts, not tracked
+data/
+# Exception: article list is a small config file, track it
+!data/wikipedia.lst
