@@ -14,8 +14,6 @@ import re
 from pathlib import Path
 from typing import Any
 
-import numpy as np
-
 logger = logging.getLogger(__name__)
 
 
@@ -281,12 +279,19 @@ def fit_quantiles(
     if quantile_points is None:
         quantile_points = [0.0, 0.25, 0.5, 0.75, 1.0]
 
-    arr = np.array(scores, dtype=np.float64)
+    sorted_scores = sorted(float(s) for s in scores)
+    n = len(sorted_scores)
     logger.info(
-        "Score summary — min: %.6f  median: %.6f  max: %.6f  mean: %.6f  std: %.6f",
-        arr.min(), float(np.median(arr)), arr.max(), arr.mean(), arr.std(),
+        "Score summary — min: %.6f  median: %.6f  max: %.6f",
+        sorted_scores[0], sorted_scores[n // 2], sorted_scores[-1],
     )
-    boundaries = [float(np.quantile(arr, q)) for q in sorted(set(quantile_points))]
+
+    def _quantile(q: float) -> float:
+        idx = q * (n - 1)
+        lo, hi = int(idx), min(int(idx) + 1, n - 1)
+        return sorted_scores[lo] + (idx - lo) * (sorted_scores[hi] - sorted_scores[lo])
+
+    boundaries = [_quantile(q) for q in sorted(set(quantile_points))]
     if boundaries[0] == boundaries[-1]:
         raise ValueError(
             f"All quantile boundaries are equal ({boundaries[0]:.6f}). "
