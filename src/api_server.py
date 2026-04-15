@@ -3,9 +3,12 @@
 from __future__ import annotations
 
 from contextlib import asynccontextmanager
+import logging
 import os
 from pathlib import Path
 from typing import Any, Protocol, Sequence
+
+logger = logging.getLogger(__name__)
 
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, Field, field_validator
@@ -106,6 +109,12 @@ def create_app(
     async def score_summary(request: ScoreRequest) -> dict[str, Any]:
         """Score the displayed summary without re-generating it."""
 
+        logger.info(
+            "POST /score — sample_count=%d top_k_tokens=%s seed=%s",
+            request.sample_count,
+            request.top_k_tokens,
+            request.seed,
+        )
         try:
             result = app.state.scoring_service.score_summary(
                 source=request.source,

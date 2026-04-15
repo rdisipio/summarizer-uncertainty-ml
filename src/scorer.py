@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 import logging
+import time
 from typing import Any, Protocol, Sequence
 
 from nltk.tokenize import sent_tokenize
@@ -192,7 +193,9 @@ class SummaryUncertaintyScorer:
             sentence.sentence_index: [] for sentence in prepared_summary.sentences
         }
 
+        t_loop_start = time.monotonic()
         for sample_index in range(sample_count):
+            t_sample_start = time.monotonic()
             sample_seed = sample_index if seed is None else seed + sample_index
             posterior_sample = self._posterior_sampler.sample(seed=sample_seed)
             sentence_distributions = self._backend.score_posterior_sample(
@@ -203,6 +206,17 @@ class SummaryUncertaintyScorer:
                 sentence_sample_map[sentence_distribution.sentence_index].append(
                     sentence_distribution
                 )
+            logger.info(
+                "Sample %d/%d done in %.2fs",
+                sample_index + 1,
+                sample_count,
+                time.monotonic() - t_sample_start,
+            )
+        logger.info(
+            "All %d samples done in %.2fs total",
+            sample_count,
+            time.monotonic() - t_loop_start,
+        )
 
         sentence_results = tuple(
             self._aggregate_sentence(
