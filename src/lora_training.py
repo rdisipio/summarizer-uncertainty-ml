@@ -193,6 +193,7 @@ def make_training_args(
         dataloader_num_workers=0,
         seed=seed,
         logging_steps=10,
+        logging_nan_inf_filter=False,
         report_to="none",
     )
 

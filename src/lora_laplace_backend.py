@@ -204,7 +204,7 @@ class LoraLaplaceBackend(RuleBasedSentenceBackend):
         prepared = super().prepare_summary(source, summary, sentences)
         logger.info("%d sentence(s) identified", len(prepared.sentences))
 
-        max_length = self._tokenizer.model_max_length
+        max_length = min(self._tokenizer.model_max_length, 1024)
 
         encoder_encoding = self._tokenizer(
             source,
@@ -421,7 +421,7 @@ def fit_laplace_approximation(
     )
 
     fisher_diag = np.zeros(total_scalars, dtype=np.float64)
-    max_length = tokenizer.model_max_length
+    max_length = min(tokenizer.model_max_length, 1024)
 
     # Switch to train mode only for the backward pass, to allow gradients.
     # We do NOT activate dropout — eval() semantics are retained for all
