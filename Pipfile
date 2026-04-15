@@ -19,10 +19,14 @@ torch = "*"
 transformers = "*"
 tqdm = "*"
 uvicorn = "*"
+ipywidgets = "*"
+matplotlib = "*"
+seaborn = "*"
 
 [dev-packages]
 pytest = "*"
 ipykernel = "*"
+matplotlib = "*"
 
 [requires]
 python_version = "3.13"

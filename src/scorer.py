@@ -248,11 +248,7 @@ class SummaryUncertaintyScorer:
 
         predictive_entropy = _entropy(predictive_distribution)
         expected_entropy = np.mean(_entropy(sample_probabilities), axis=0)
-        epistemic_mi = np.clip(
-            predictive_entropy - expected_entropy,
-            a_min=0.0,
-            a_max=None,
-        )
+        epistemic_mi = np.maximum(predictive_entropy - expected_entropy, 0.0)
 
         token_target_probabilities = np.take_along_axis(
             sample_probabilities,

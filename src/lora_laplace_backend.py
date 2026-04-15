@@ -112,16 +112,19 @@ class DiagonalLaplacePosteriorSampler:
         Returns:
             A LaplaceState whose perturbations add to the MAP LoRA weights.
         """
-        rng = np.random.default_rng(seed)
-        flat_delta = rng.standard_normal(len(self._posterior_std)) * self._posterior_std
-
+        import random as _random
+        _random.seed(seed)
         perturbations: dict[str, torch.Tensor] = {}
         offset = 0
         for name, shape, size in zip(
             self._param_names, self._param_shapes, self._param_sizes
         ):
-            chunk = flat_delta[offset : offset + size].reshape(shape)
-            perturbations[name] = torch.from_numpy(chunk.astype(np.float32))
+            std_chunk = self._posterior_std[offset : offset + size]
+            delta = torch.tensor(
+                [_random.gauss(0.0, float(s)) for s in std_chunk],
+                dtype=torch.float32,
+            ).reshape(shape)
+            perturbations[name] = delta
             offset += size
 
         return LaplaceState(perturbations=perturbations)
