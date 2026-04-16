@@ -231,7 +231,13 @@ def _build_default_normalizer() -> QuantileNormalizer:
 
     default_path = Path(__file__).resolve().parent.parent / "config" / "uncertainty_quantiles_mc_dropout.json"
     config_path = os.environ.get("QUANTILE_CONFIG_PATH", str(default_path))
-    return load_quantile_normalizer(config_path)
+    normalizer = load_quantile_normalizer(config_path)
+    logger.info(
+        "Quantile normalizer loaded from %r — boundaries: %s",
+        config_path,
+        [f"{b:.4f}" for b in normalizer.boundaries],
+    )
+    return normalizer
 
 
 def _serialize_summary_score(
