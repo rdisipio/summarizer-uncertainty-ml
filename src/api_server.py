@@ -62,6 +62,12 @@ class HealthResponse(BaseModel):
     status: str
 
 
+class WakeResponse(BaseModel):
+    """Wake-up response."""
+
+    status: str
+
+
 def create_app(
     scoring_service: ScoringService,
     *,
@@ -90,6 +96,7 @@ def create_app(
             ),
             "endpoints": {
                 "GET /health": "Liveness check.",
+                "GET /wake": "Wake-up ping; call on frontend start to ensure the API is ready.",
                 "POST /score": (
                     "Score a summary. Required fields: source (str), summary (str). "
                     "Optional: sample_count (int, 1-100), sentences (list[str]), "
@@ -104,6 +111,16 @@ def create_app(
         """Return API liveness information."""
 
         return HealthResponse(status="ok")
+
+    @app.get("/wake", response_model=WakeResponse)
+    async def wake() -> WakeResponse:
+        """Wake-up ping for cold-start scenarios.
+
+        Call this endpoint when the frontend starts so that the API server
+        is fully warmed up by the time the user submits their first request.
+        """
+
+        return WakeResponse(status="awake")
 
     @app.post("/score")
     async def score_summary(request: ScoreRequest) -> dict[str, Any]:
