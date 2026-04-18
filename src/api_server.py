@@ -87,14 +87,18 @@ def create_app(
     server can accept /wake and /is-ready requests while the model loads.
     """
 
-    @asynccontextmanager
-    async def lifespan(app: FastAPI) -> Any:
-        app.state.ready = False
-        app.state.normalizer = normalizer
+    async def _load_service(app: FastAPI) -> None:
         loop = asyncio.get_event_loop()
         app.state.scoring_service = await loop.run_in_executor(None, scoring_service_factory)
         app.state.ready = True
         logger.info("Scoring service ready")
+
+    @asynccontextmanager
+    async def lifespan(app: FastAPI) -> Any:
+        app.state.ready = False
+        app.state.scoring_service = None
+        app.state.normalizer = normalizer
+        asyncio.create_task(_load_service(app))
         yield
 
     app = FastAPI(title=title, lifespan=lifespan)
@@ -148,6 +152,9 @@ def create_app(
     @app.post("/score")
     async def score_summary(request: ScoreRequest) -> dict[str, Any]:
         """Score the displayed summary without re-generating it."""
+
+        if not app.state.ready:
+            raise HTTPException(status_code=503, detail="Scoring service is still loading.")
 
         logger.info(
             "POST /score — sample_count=%d top_k_tokens=%s seed=%s",
