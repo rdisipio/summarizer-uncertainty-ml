@@ -160,12 +160,11 @@ class MCDropoutBackend(RuleBasedSentenceBackend):
             tok_start, tok_end = token_indices[0], token_indices[-1] + 1
             sentence_token_slices[sentence_spec.sentence_index] = (tok_start, tok_end)
             logger.info(
-                "Sentence %d aligned: tokens [%d, %d) (%d tokens) — %r",
+                "Sentence %d aligned: tokens [%d, %d) (%d tokens)",
                 sentence_spec.sentence_index,
                 tok_start,
                 tok_end,
                 tok_end - tok_start,
-                sentence_spec.text,
             )
 
         # Construct decoder input: [decoder_start_token] + summary_tokens.
