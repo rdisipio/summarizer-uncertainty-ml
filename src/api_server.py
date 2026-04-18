@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
+import asyncio
 from contextlib import asynccontextmanager
 import logging
 import os
 from pathlib import Path
-from typing import Any, Protocol, Sequence
+from typing import Any, Callable, Protocol, Sequence
 
 logger = logging.getLogger(__name__)
 
@@ -68,18 +69,32 @@ class WakeResponse(BaseModel):
     status: str
 
 
+class ReadinessResponse(BaseModel):
+    """Readiness check response."""
+
+    ready: bool
+
+
 def create_app(
-    scoring_service: ScoringService,
+    scoring_service_factory: Callable[[], ScoringService],
     *,
     normalizer: QuantileNormalizer,
     title: str = "Summary Uncertainty API",
 ) -> FastAPI:
-    """Create the FastAPI application with an injected scoring service."""
+    """Create the FastAPI application with an injected scoring service factory.
+
+    The factory is called in a background thread during lifespan startup so the
+    server can accept /wake and /is-ready requests while the model loads.
+    """
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> Any:
-        app.state.scoring_service = scoring_service
+        app.state.ready = False
         app.state.normalizer = normalizer
+        loop = asyncio.get_event_loop()
+        app.state.scoring_service = await loop.run_in_executor(None, scoring_service_factory)
+        app.state.ready = True
+        logger.info("Scoring service ready")
         yield
 
     app = FastAPI(title=title, lifespan=lifespan)
@@ -96,7 +111,8 @@ def create_app(
             ),
             "endpoints": {
                 "GET /health": "Liveness check.",
-                "GET /wake": "Wake-up ping; call on frontend start to ensure the API is ready.",
+                "GET /wake": "Wake-up ping; call on frontend start to trigger cold-start recovery.",
+                "GET /is-ready": "Returns {ready: true} once the scoring model is fully loaded.",
                 "POST /score": (
                     "Score a summary. Required fields: source (str), summary (str). "
                     "Optional: sample_count (int, 1-100), sentences (list[str]), "
@@ -122,6 +138,12 @@ def create_app(
 
         logger.info("GET /wake — server awake")
         return WakeResponse(status="awake")
+
+    @app.get("/is-ready", response_model=ReadinessResponse)
+    async def is_ready() -> ReadinessResponse:
+        """Return whether the scoring model has finished loading."""
+
+        return ReadinessResponse(ready=getattr(app.state, "ready", False))
 
     @app.post("/score")
     async def score_summary(request: ScoreRequest) -> dict[str, Any]:
@@ -277,6 +299,6 @@ def _serialize_summary_score(
 
 
 app = create_app(
-    _build_default_service(),
+    _build_default_service,
     normalizer=_build_default_normalizer(),
 )
