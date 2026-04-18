@@ -120,6 +120,7 @@ def create_app(
         is fully warmed up by the time the user submits their first request.
         """
 
+        logger.info("GET /wake — server awake")
         return WakeResponse(status="awake")
 
     @app.post("/score")
