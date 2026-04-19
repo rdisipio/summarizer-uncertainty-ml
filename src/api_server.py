@@ -79,6 +79,7 @@ def create_app(
     scoring_service_factory: Callable[[], ScoringService],
     *,
     normalizer: QuantileNormalizer,
+    ambiguity_normalizer: QuantileNormalizer,
     title: str = "Summary Uncertainty API",
 ) -> FastAPI:
     """Create the FastAPI application with an injected scoring service factory.
@@ -98,6 +99,7 @@ def create_app(
         app.state.ready = False
         app.state.scoring_service = None
         app.state.normalizer = normalizer
+        app.state.ambiguity_normalizer = ambiguity_normalizer
         asyncio.create_task(_load_service(app))
         yield
 
@@ -178,7 +180,7 @@ def create_app(
         except Exception as error:
             raise HTTPException(status_code=500, detail=str(error)) from error
 
-        return _serialize_summary_score(result, app.state.normalizer)
+        return _serialize_summary_score(result, app.state.normalizer, app.state.ambiguity_normalizer)
 
     return app
 
@@ -287,9 +289,30 @@ def _build_default_normalizer() -> QuantileNormalizer:
     return normalizer
 
 
+def _build_default_ambiguity_normalizer() -> QuantileNormalizer:
+    """Load the configured ambiguity normalizer, falling back to the uncertainty normalizer."""
+
+    default_path = Path(__file__).resolve().parent.parent / "config" / "ambiguity_quantiles_mc_dropout.json"
+    config_path = os.environ.get("AMBIGUITY_QUANTILE_CONFIG_PATH", str(default_path))
+    if not Path(config_path).exists():
+        logger.warning(
+            "Ambiguity quantile config not found at %r — falling back to uncertainty normalizer.",
+            config_path,
+        )
+        return _build_default_normalizer()
+    normalizer = load_quantile_normalizer(config_path)
+    logger.info(
+        "Ambiguity normalizer loaded from %r — boundaries: %s",
+        config_path,
+        [f"{b:.4f}" for b in normalizer.boundaries],
+    )
+    return normalizer
+
+
 def _serialize_summary_score(
     summary_score: SummaryScore,
     normalizer: QuantileNormalizer,
+    ambiguity_normalizer: QuantileNormalizer,
 ) -> dict[str, Any]:
     """Serialize a summary score and attach display-oriented uncertainty values."""
 
@@ -302,10 +325,15 @@ def _serialize_summary_score(
         sentence_result["uncertainty_score"] = normalizer.normalize(raw_uncertainty)
         sentence_result["uncertainty_band"] = normalizer.band(raw_uncertainty)
 
+        raw_ambiguity = float(sentence_result["expected_entropy"])
+        sentence_result["ambiguity_score"] = ambiguity_normalizer.normalize(raw_ambiguity)
+        sentence_result["ambiguity_band"] = ambiguity_normalizer.band(raw_ambiguity)
+
     return payload
 
 
 app = create_app(
     _build_default_service,
     normalizer=_build_default_normalizer(),
+    ambiguity_normalizer=_build_default_ambiguity_normalizer(),
 )
