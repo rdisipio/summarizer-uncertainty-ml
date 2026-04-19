@@ -317,7 +317,10 @@ def _serialize_summary_score(
     """Serialize a summary score and attach display-oriented uncertainty values."""
 
     payload = summary_score.to_dict()
-    payload["normalization"] = {"boundaries": list(normalizer.boundaries)}
+    payload["normalization"] = {
+        "boundaries": list(normalizer.boundaries),
+        "ambiguity_boundaries": list(ambiguity_normalizer.boundaries),
+    }
 
     for sentence_result in payload["sentence_results"]:
         raw_uncertainty = float(sentence_result["uncertainty"])

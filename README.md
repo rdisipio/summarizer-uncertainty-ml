@@ -132,7 +132,8 @@ Expected response shape:
     }
   ],
   "normalization": {
-    "boundaries": [0.032, 0.073, 0.084, 0.096, 0.352]
+    "boundaries": [0.032, 0.073, 0.084, 0.096, 0.352],
+    "ambiguity_boundaries": [0.200, 0.589, 0.730, 0.877, 1.568]
   }
 }
 ```
