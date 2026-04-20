@@ -157,16 +157,12 @@ def create_app(
     @app.post("/score")
     async def score_summary(
         request: ScoreRequest,
-        authorization: str | None = Header(default=None),
+        x_api_token: str | None = Header(default=None),
     ) -> dict[str, Any]:
         """Score the displayed summary without re-generating it."""
 
-        # TODO: re-enable auth once service is confirmed working end-to-end
-        # if api_token:
-        #     expected = f"Bearer {api_token.strip()}"
-        #     if authorization != expected:
-        #         logger.warning("Auth failed — received: %r  expected_len: %d", authorization, len(expected))
-        #         raise HTTPException(status_code=401, detail="Invalid or missing bearer token.")
+        if api_token and x_api_token != api_token.strip():
+            raise HTTPException(status_code=401, detail="Invalid or missing API token.")
 
         if not app.state.ready:
             raise HTTPException(status_code=503, detail="Scoring service is still loading.")
