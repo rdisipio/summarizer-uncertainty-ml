@@ -79,12 +79,13 @@ class ReadinessResponse(BaseModel):
 _bearer = HTTPBearer(auto_error=False)
 
 
-def _require_token(
-    api_token: str,
-    credentials: HTTPAuthorizationCredentials | None = Security(_bearer),
-) -> None:
-    if credentials is None or credentials.credentials != api_token:
-        raise HTTPException(status_code=401, detail="Invalid or missing bearer token.")
+def _make_auth_dependency(api_token: str) -> Callable:
+    async def _check_token(
+        credentials: HTTPAuthorizationCredentials | None = Security(_bearer),
+    ) -> None:
+        if credentials is None or credentials.credentials != api_token:
+            raise HTTPException(status_code=401, detail="Invalid or missing bearer token.")
+    return _check_token
 
 
 def create_app(
@@ -164,12 +165,7 @@ def create_app(
 
         return ReadinessResponse(ready=getattr(app.state, "ready", False))
 
-    auth_dependency = (
-        Depends(lambda credentials=Security(_bearer): _require_token(api_token, credentials))
-        if api_token
-        else None
-    )
-    score_deps = [auth_dependency] if auth_dependency else []
+    score_deps = [Depends(_make_auth_dependency(api_token))] if api_token else []
 
     @app.post("/score", dependencies=score_deps)
     async def score_summary(request: ScoreRequest) -> dict[str, Any]:
