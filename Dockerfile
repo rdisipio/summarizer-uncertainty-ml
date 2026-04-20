@@ -13,6 +13,7 @@ ENV LORA_ADAPTER_PATH=/app/models/bart-large-xsum-lora-laplace
 ENV LORA_SAMPLER_PATH=/app/models/bart-large-xsum-lora-laplace/laplace_sampler.npz
 ENV QUANTILE_CONFIG_PATH=/app/models/bart-large-xsum-lora-laplace/uncertainty_quantiles_lora_laplace.json
 ENV AMBIGUITY_QUANTILE_CONFIG_PATH=/app/models/bart-large-xsum-lora-laplace/ambiguity_quantiles_lora_laplace.json
+ENV API_TOKEN=
 ENV PORT=7860
 
 WORKDIR /app

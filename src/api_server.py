@@ -11,7 +11,8 @@ from typing import Any, Callable, Protocol, Sequence
 
 logger = logging.getLogger(__name__)
 
-from fastapi import FastAPI, HTTPException
+from fastapi import Depends, FastAPI, HTTPException, Security
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel, Field, field_validator
 
 from .dummy_backend import build_dummy_scorer
@@ -75,11 +76,23 @@ class ReadinessResponse(BaseModel):
     ready: bool
 
 
+_bearer = HTTPBearer(auto_error=False)
+
+
+def _require_token(
+    api_token: str,
+    credentials: HTTPAuthorizationCredentials | None = Security(_bearer),
+) -> None:
+    if credentials is None or credentials.credentials != api_token:
+        raise HTTPException(status_code=401, detail="Invalid or missing bearer token.")
+
+
 def create_app(
     scoring_service_factory: Callable[[], ScoringService],
     *,
     normalizer: QuantileNormalizer,
     ambiguity_normalizer: QuantileNormalizer,
+    api_token: str | None = None,
     title: str = "Summary Uncertainty API",
 ) -> FastAPI:
     """Create the FastAPI application with an injected scoring service factory.
@@ -151,7 +164,14 @@ def create_app(
 
         return ReadinessResponse(ready=getattr(app.state, "ready", False))
 
-    @app.post("/score")
+    auth_dependency = (
+        Depends(lambda credentials=Security(_bearer): _require_token(api_token, credentials))
+        if api_token
+        else None
+    )
+    score_deps = [auth_dependency] if auth_dependency else []
+
+    @app.post("/score", dependencies=score_deps)
     async def score_summary(request: ScoreRequest) -> dict[str, Any]:
         """Score the displayed summary without re-generating it."""
 
@@ -339,4 +359,5 @@ app = create_app(
     _build_default_service,
     normalizer=_build_default_normalizer(),
     ambiguity_normalizer=_build_default_ambiguity_normalizer(),
+    api_token=os.environ.get("API_TOKEN") or None,
 )
