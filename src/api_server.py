@@ -11,8 +11,7 @@ from typing import Any, Callable, Protocol, Sequence
 
 logger = logging.getLogger(__name__)
 
-from fastapi import Depends, FastAPI, HTTPException, Security
-from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+from fastapi import FastAPI, Header, HTTPException
 from pydantic import BaseModel, Field, field_validator
 
 from .dummy_backend import build_dummy_scorer
@@ -76,16 +75,6 @@ class ReadinessResponse(BaseModel):
     ready: bool
 
 
-_bearer = HTTPBearer(auto_error=False)
-
-
-def _make_auth_dependency(api_token: str) -> Callable:
-    async def _check_token(
-        credentials: HTTPAuthorizationCredentials | None = Security(_bearer),
-    ) -> None:
-        if credentials is None or credentials.credentials != api_token:
-            raise HTTPException(status_code=401, detail="Invalid or missing bearer token.")
-    return _check_token
 
 
 def create_app(
@@ -165,11 +154,15 @@ def create_app(
 
         return ReadinessResponse(ready=getattr(app.state, "ready", False))
 
-    score_deps = [Depends(_make_auth_dependency(api_token))] if api_token else []
-
-    @app.post("/score", dependencies=score_deps)
-    async def score_summary(request: ScoreRequest) -> dict[str, Any]:
+    @app.post("/score")
+    async def score_summary(
+        request: ScoreRequest,
+        authorization: str | None = Header(default=None),
+    ) -> dict[str, Any]:
         """Score the displayed summary without re-generating it."""
+
+        if api_token and authorization != f"Bearer {api_token.strip()}":
+            raise HTTPException(status_code=401, detail="Invalid or missing bearer token.")
 
         if not app.state.ready:
             raise HTTPException(status_code=503, detail="Scoring service is still loading.")
