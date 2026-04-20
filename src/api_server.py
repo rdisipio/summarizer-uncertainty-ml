@@ -344,9 +344,12 @@ def _serialize_summary_score(
     return payload
 
 
+_api_token = os.environ.get("API_TOKEN") or None
+logger.warning("DEBUG API_TOKEN=%r", _api_token)
+
 app = create_app(
     _build_default_service,
     normalizer=_build_default_normalizer(),
     ambiguity_normalizer=_build_default_ambiguity_normalizer(),
-    api_token=os.environ.get("API_TOKEN") or None,
+    api_token=_api_token,
 )
