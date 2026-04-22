@@ -322,6 +322,7 @@ class LoraLaplaceBackend(RuleBasedSentenceBackend):
         # logits: (1, decoder_seq_len, vocab_size)
         logits = outputs.logits.squeeze(0)
         probs = F.softmax(logits, dim=-1).cpu().float().numpy()
+        log_probs = F.log_softmax(logits, dim=-1).cpu().float().numpy()
 
         sentence_distributions: list[SampledSentenceDistributions] = []
         for sentence_spec in prepared_summary.sentences:
@@ -330,11 +331,13 @@ class LoraLaplaceBackend(RuleBasedSentenceBackend):
                 summary_token_ids[tok_start:tok_end], dtype=np.int64
             )
             token_probs = probs[tok_start:tok_end, :]
+            token_log_probs = log_probs[tok_start:tok_end, :]
             sentence_distributions.append(
                 SampledSentenceDistributions(
                     sentence_index=sentence_spec.sentence_index,
                     target_token_ids=target_ids,
                     token_probabilities=token_probs,
+                    token_log_probabilities=token_log_probs,
                 )
             )
 

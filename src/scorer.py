@@ -44,6 +44,7 @@ class SampledSentenceDistributions:
     sentence_index: int
     target_token_ids: np.ndarray
     token_probabilities: np.ndarray
+    token_log_probabilities: np.ndarray | None = None
 
     def __post_init__(self) -> None:
         if self.target_token_ids.ndim != 1:
@@ -54,6 +55,11 @@ class SampledSentenceDistributions:
             raise ValueError(
                 "token_probabilities rows must match target_token_ids length."
             )
+        if self.token_log_probabilities is not None:
+            if self.token_log_probabilities.shape != self.token_probabilities.shape:
+                raise ValueError(
+                    "token_log_probabilities must have the same shape as token_probabilities."
+                )
 
 
 @dataclass(frozen=True)
@@ -264,12 +270,25 @@ class SummaryUncertaintyScorer:
         expected_entropy = np.mean(_entropy(sample_probabilities), axis=0)
         epistemic_mi = np.maximum(predictive_entropy - expected_entropy, 0.0)
 
-        token_target_probabilities = np.take_along_axis(
-            sample_probabilities,
-            token_id_reference[np.newaxis, :, np.newaxis],
-            axis=2,
-        ).squeeze(axis=2)
-        mean_logprob = np.mean(np.log(np.clip(token_target_probabilities, _EPSILON, 1.0)), axis=0)
+        if all(s.token_log_probabilities is not None for s in sentence_samples):
+            # Use numerically-stable log_softmax values supplied by the backend
+            # to avoid float32 underflow that floors log-prob to log(ε) ≈ -27.6.
+            log_prob_stack = np.stack(
+                [s.token_log_probabilities for s in sentence_samples], axis=0
+            ).astype(np.float64)
+            target_log_probs = np.take_along_axis(
+                log_prob_stack,
+                token_id_reference[np.newaxis, :, np.newaxis],
+                axis=2,
+            ).squeeze(axis=2)
+            mean_logprob = np.mean(target_log_probs, axis=0)
+        else:
+            token_target_probabilities = np.take_along_axis(
+                sample_probabilities,
+                token_id_reference[np.newaxis, :, np.newaxis],
+                axis=2,
+            ).squeeze(axis=2)
+            mean_logprob = np.mean(np.log(np.clip(token_target_probabilities, _EPSILON, 1.0)), axis=0)
 
         token_scores = tuple(
             TokenScore(

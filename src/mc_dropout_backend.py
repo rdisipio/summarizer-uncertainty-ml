@@ -235,6 +235,7 @@ class MCDropoutBackend(RuleBasedSentenceBackend):
         # logits[0, i, :] is the distribution over summary token at index i.
         logits = outputs.logits.squeeze(0)  # (decoder_seq_len, vocab_size)
         probs = F.softmax(logits, dim=-1).cpu().float().numpy()  # (seq_len, vocab_size)
+        log_probs = F.log_softmax(logits, dim=-1).cpu().float().numpy()  # (seq_len, vocab_size)
 
         sentence_distributions: list[SampledSentenceDistributions] = []
         for sentence_spec in prepared_summary.sentences:
@@ -244,11 +245,13 @@ class MCDropoutBackend(RuleBasedSentenceBackend):
                 dtype=np.int64,
             )
             token_probs = probs[tok_start:tok_end, :]  # (num_sentence_tokens, vocab_size)
+            token_log_probs = log_probs[tok_start:tok_end, :]
             sentence_distributions.append(
                 SampledSentenceDistributions(
                     sentence_index=sentence_spec.sentence_index,
                     target_token_ids=target_ids,
                     token_probabilities=token_probs,
+                    token_log_probabilities=token_log_probs,
                 )
             )
 
