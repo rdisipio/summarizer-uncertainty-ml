@@ -43,6 +43,7 @@ class ScoreRequest(BaseModel):
     sample_count: int = Field(default=20, ge=1, le=100)
     top_k_tokens: int | None = Field(default=None, ge=1)
     seed: int | None = None
+    compute_consistency: bool = True
 
     @field_validator("sentences")
     @classmethod
@@ -196,6 +197,7 @@ def create_app(
             app.state.normalizer,
             app.state.ambiguity_normalizer,
             app.state.consistency_normalizer,
+            compute_consistency=request.compute_consistency,
         )
 
     return app
@@ -351,15 +353,18 @@ def _serialize_summary_score(
     normalizer: QuantileNormalizer,
     ambiguity_normalizer: QuantileNormalizer,
     consistency_normalizer: QuantileNormalizer,
+    compute_consistency: bool = True,
 ) -> dict[str, Any]:
     """Serialize a summary score and attach display-oriented uncertainty values."""
 
     payload = summary_score.to_dict()
-    payload["normalization"] = {
+    normalization: dict[str, Any] = {
         "boundaries": list(normalizer.boundaries),
         "ambiguity_boundaries": list(ambiguity_normalizer.boundaries),
-        "consistency_boundaries": list(consistency_normalizer.boundaries),
     }
+    if compute_consistency:
+        normalization["consistency_boundaries"] = list(consistency_normalizer.boundaries)
+    payload["normalization"] = normalization
 
     for sentence_result in payload["sentence_results"]:
         raw_uncertainty = float(sentence_result["uncertainty"])
@@ -371,15 +376,16 @@ def _serialize_summary_score(
         sentence_result["ambiguity_score"] = ambiguity_normalizer.normalize(raw_ambiguity)
         sentence_result["ambiguity_band"] = ambiguity_normalizer.band(raw_ambiguity)
 
-        # consistency_score: higher = more consistent with the source.
-        # mean_logprob is negative; negate it so higher raw = less consistent,
-        # then invert the 0-100 scale so the final score reads naturally.
-        raw_inconsistency = -float(sentence_result["mean_logprob"])
-        inconsistency_normalized = consistency_normalizer.normalize(raw_inconsistency)
-        sentence_result["consistency_score"] = round(100.0 - inconsistency_normalized, 4)
-        sentence_result["consistency_band"] = _invert_band(
-            consistency_normalizer.band(raw_inconsistency)
-        )
+        if compute_consistency:
+            # consistency_score: higher = more consistent with the source.
+            # mean_logprob is negative; negate it so higher raw = less consistent,
+            # then invert the 0-100 scale so the final score reads naturally.
+            raw_inconsistency = -float(sentence_result["mean_logprob"])
+            inconsistency_normalized = consistency_normalizer.normalize(raw_inconsistency)
+            sentence_result["consistency_score"] = round(100.0 - inconsistency_normalized, 4)
+            sentence_result["consistency_band"] = _invert_band(
+                consistency_normalizer.band(raw_inconsistency)
+            )
 
     return payload
 
