@@ -82,6 +82,7 @@ def create_app(
     *,
     normalizer: QuantileNormalizer,
     ambiguity_normalizer: QuantileNormalizer,
+    consistency_normalizer: QuantileNormalizer,
     api_token: str | None = None,
     title: str = "Summary Uncertainty API",
 ) -> FastAPI:
@@ -103,6 +104,7 @@ def create_app(
         app.state.scoring_service = None
         app.state.normalizer = normalizer
         app.state.ambiguity_normalizer = ambiguity_normalizer
+        app.state.consistency_normalizer = consistency_normalizer
         asyncio.create_task(_load_service(app))
         yield
 
@@ -189,7 +191,12 @@ def create_app(
         except Exception as error:
             raise HTTPException(status_code=500, detail=str(error)) from error
 
-        return _serialize_summary_score(result, app.state.normalizer, app.state.ambiguity_normalizer)
+        return _serialize_summary_score(
+            result,
+            app.state.normalizer,
+            app.state.ambiguity_normalizer,
+            app.state.consistency_normalizer,
+        )
 
     return app
 
@@ -298,6 +305,27 @@ def _build_default_normalizer() -> QuantileNormalizer:
     return normalizer
 
 
+def _build_default_consistency_normalizer() -> QuantileNormalizer:
+    """Load the configured consistency normalizer, falling back to the uncertainty normalizer.
+
+    Boundaries are over -mean_logprob (a positive value; higher = less consistent).
+    Fit them from a calibration corpus with compute_uncertainty_scores_lora_laplace.py
+    and save to the path set in CONSISTENCY_QUANTILE_CONFIG_PATH.
+    """
+
+    default_path = Path(__file__).resolve().parent.parent / "config" / "consistency_quantiles_lora_laplace.json"
+    config_path = os.environ.get("CONSISTENCY_QUANTILE_CONFIG_PATH", str(default_path))
+    if not Path(config_path).exists():
+        logger.warning(
+            "Consistency quantile config not found at %r — falling back to uncertainty normalizer.",
+            config_path,
+        )
+        return _build_default_normalizer()
+    normalizer = load_quantile_normalizer(config_path)
+    logger.info("Consistency normalizer loaded from %r", config_path)
+    return normalizer
+
+
 def _build_default_ambiguity_normalizer() -> QuantileNormalizer:
     """Load the configured ambiguity normalizer, falling back to the uncertainty normalizer."""
 
@@ -322,6 +350,7 @@ def _serialize_summary_score(
     summary_score: SummaryScore,
     normalizer: QuantileNormalizer,
     ambiguity_normalizer: QuantileNormalizer,
+    consistency_normalizer: QuantileNormalizer,
 ) -> dict[str, Any]:
     """Serialize a summary score and attach display-oriented uncertainty values."""
 
@@ -329,6 +358,7 @@ def _serialize_summary_score(
     payload["normalization"] = {
         "boundaries": list(normalizer.boundaries),
         "ambiguity_boundaries": list(ambiguity_normalizer.boundaries),
+        "consistency_boundaries": list(consistency_normalizer.boundaries),
     }
 
     for sentence_result in payload["sentence_results"]:
@@ -341,7 +371,25 @@ def _serialize_summary_score(
         sentence_result["ambiguity_score"] = ambiguity_normalizer.normalize(raw_ambiguity)
         sentence_result["ambiguity_band"] = ambiguity_normalizer.band(raw_ambiguity)
 
+        # consistency_score: higher = more consistent with the source.
+        # mean_logprob is negative; negate it so higher raw = less consistent,
+        # then invert the 0-100 scale so the final score reads naturally.
+        raw_inconsistency = -float(sentence_result["mean_logprob"])
+        inconsistency_normalized = consistency_normalizer.normalize(raw_inconsistency)
+        sentence_result["consistency_score"] = round(100.0 - inconsistency_normalized, 4)
+        sentence_result["consistency_band"] = _invert_band(
+            consistency_normalizer.band(raw_inconsistency)
+        )
+
     return payload
+
+
+def _invert_band(band: str) -> str:
+    if band == "low":
+        return "high"
+    if band == "high":
+        return "low"
+    return band
 
 
 _api_token = os.environ.get("API_TOKEN") or None
@@ -350,5 +398,6 @@ app = create_app(
     _build_default_service,
     normalizer=_build_default_normalizer(),
     ambiguity_normalizer=_build_default_ambiguity_normalizer(),
+    consistency_normalizer=_build_default_consistency_normalizer(),
     api_token=_api_token,
 )
