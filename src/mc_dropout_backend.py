@@ -86,6 +86,11 @@ class MCDropoutBackend(RuleBasedSentenceBackend):
         # train() activates dropout; gradients are still disabled per forward pass
         self._model.train()
         logger.info("Model ready (%d parameters)", sum(p.numel() for p in self._model.parameters()))
+        logger.info("Running warm-up forward pass")
+        with torch.no_grad():
+            _dummy = torch.tensor([[self._model.config.decoder_start_token_id]], device=self._device)
+            self._model(input_ids=_dummy, decoder_input_ids=_dummy)
+        logger.info("Warm-up complete")
 
     def prepare_summary(
         self,

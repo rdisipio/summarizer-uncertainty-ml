@@ -178,6 +178,11 @@ class LoraLaplaceBackend(RuleBasedSentenceBackend):
             sum(p.numel() for p in self._model.parameters()),
             lora_scalar_count,
         )
+        logger.info("Running warm-up forward pass")
+        with torch.no_grad():
+            _dummy = torch.tensor([[self._model.config.decoder_start_token_id]], device=self._device)
+            self._model(input_ids=_dummy, decoder_input_ids=_dummy)
+        logger.info("Warm-up complete")
 
     # ------------------------------------------------------------------
     # SummaryScoringBackend interface
