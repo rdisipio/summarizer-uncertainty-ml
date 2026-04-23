@@ -50,7 +50,7 @@ from src.lora_laplace_backend import (
     load_laplace_sampler,
     save_laplace_sampler,
 )
-from src.lora_training import fit_quantiles, save_quantiles
+from src.lora_training import fit_quantiles, save_quantiles, upload_to_hub
 from src.scorer import SummaryUncertaintyScorer
 
 logging.basicConfig(
@@ -105,6 +105,22 @@ def rescale_sampler(
 
 
 def main(args: argparse.Namespace) -> None:
+    if args.upload_only:
+        if not args.hub_repo:
+            logger.error("--upload-only requires --hub-repo")
+            sys.exit(1)
+        subfolder = args.hub_subfolder
+        upload_to_hub(
+            files=[
+                (args.sampler_path,       f"{subfolder}/laplace_sampler.npz"),
+                (args.uncertainty_config, f"{subfolder}/uncertainty_quantiles_lora_laplace.json"),
+                (args.ambiguity_config,   f"{subfolder}/ambiguity_quantiles_lora_laplace.json"),
+                (args.consistency_config, f"{subfolder}/consistency_quantiles_lora_laplace.json"),
+            ],
+            repo_id=args.hub_repo,
+        )
+        return
+
     random.seed(args.seed)
 
     # ------------------------------------------------------------------
@@ -250,6 +266,22 @@ def main(args: argparse.Namespace) -> None:
 
     logger.info("All quantile config files updated.")
 
+    # ------------------------------------------------------------------
+    # 5. Optionally upload rescaled files to the HuggingFace Hub
+    # ------------------------------------------------------------------
+    if args.hub_repo:
+        subfolder = args.hub_subfolder
+        upload_to_hub(
+            files=[
+                (args.sampler_path,          f"{subfolder}/laplace_sampler.npz"),
+                (args.uncertainty_config,    f"{subfolder}/uncertainty_quantiles_lora_laplace.json"),
+                (args.ambiguity_config,      f"{subfolder}/ambiguity_quantiles_lora_laplace.json"),
+                (args.consistency_config,    f"{subfolder}/consistency_quantiles_lora_laplace.json"),
+            ],
+            repo_id=args.hub_repo,
+        )
+        logger.info("Rescaled sampler and quantile configs uploaded to Hub.")
+
 
 if __name__ == "__main__":
     p = argparse.ArgumentParser(
@@ -300,4 +332,22 @@ if __name__ == "__main__":
     p.add_argument("--n-max", type=int, default=None, metavar="N",
                    help="Cap the number of records to score (default: all)")
     p.add_argument("--seed", type=int, default=42)
+    p.add_argument(
+        "--upload-only",
+        action="store_true",
+        help="Skip rescaling and scoring; just upload the existing local files to the Hub.",
+    )
+    p.add_argument(
+        "--hub-repo",
+        default=None,
+        metavar="REPO_ID",
+        help="HuggingFace Hub model repo to upload rescaled files to (e.g. rdisipio/summarizer-uncertainty-models). "
+             "Omit to skip upload.",
+    )
+    p.add_argument(
+        "--hub-subfolder",
+        default="bart-large-xsum-lora-laplace",
+        metavar="SUBFOLDER",
+        help="Subfolder inside the Hub repo for this model's files (default: bart-large-xsum-lora-laplace).",
+    )
     main(p.parse_args())
