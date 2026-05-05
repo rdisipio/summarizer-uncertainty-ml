@@ -85,12 +85,13 @@ async def _keep_alive_task(frontend_url: str, interval_seconds: int = 60) -> Non
     async with aiohttp.ClientSession() as session:
         while True:
             try:
+                logger.info(f"Sending keep-alive ping to frontend")
                 async with session.head(
                     frontend_url,
                     timeout=aiohttp.ClientTimeout(total=10),
                     allow_redirects=False,
                 ):
-                    logger.debug(f"Keep-alive ping to frontend successful")
+                    pass
             except asyncio.TimeoutError:
                 logger.warning(f"Timeout pinging frontend at {frontend_url}")
             except Exception as e:
