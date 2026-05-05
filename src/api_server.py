@@ -9,6 +9,8 @@ import os
 from pathlib import Path
 from typing import Any, Callable, Protocol, Sequence
 
+import aiohttp
+
 logger = logging.getLogger(__name__)
 
 from fastapi import FastAPI, Header, HTTPException
@@ -76,6 +78,20 @@ class ReadinessResponse(BaseModel):
     ready: bool
 
 
+async def _keep_alive_task(frontend_url: str, interval_seconds: int = 60) -> None:
+    """Periodically ping the frontend to keep it from going to sleep."""
+
+    await asyncio.sleep(5)  # Wait a bit before starting pings
+    async with aiohttp.ClientSession() as session:
+        while True:
+            try:
+                async with session.get(frontend_url, timeout=aiohttp.ClientTimeout(total=10)):
+                    logger.debug(f"Pinged frontend at {frontend_url}")
+            except asyncio.TimeoutError:
+                logger.warning(f"Timeout pinging frontend at {frontend_url}")
+            except Exception as e:
+                logger.warning(f"Error pinging frontend: {e}")
+            await asyncio.sleep(interval_seconds)
 
 
 def create_app(
@@ -107,6 +123,10 @@ def create_app(
         app.state.ambiguity_normalizer = ambiguity_normalizer
         app.state.consistency_normalizer = consistency_normalizer
         asyncio.create_task(_load_service(app))
+
+        frontend_url = os.environ.get("FRONTEND_URL")
+        if frontend_url:
+            asyncio.create_task(_keep_alive_task(frontend_url))
         yield
 
     app = FastAPI(title=title, lifespan=lifespan)
