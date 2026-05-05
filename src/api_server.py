@@ -79,21 +79,33 @@ class ReadinessResponse(BaseModel):
 
 
 async def _keep_alive_task(frontend_url: str, interval_seconds: int = 60) -> None:
-    """Periodically ping the frontend to keep it from going to sleep."""
+    """Periodically ping the frontend to keep it from going to sleep.
+
+    Transforms huggingface.co/spaces URLs to the corresponding hf.space direct URL.
+    """
 
     await asyncio.sleep(5)  # Wait a bit before starting pings
+
+    # Transform https://huggingface.co/spaces/owner/repo to https://owner-repo.hf.space/health
+    if "huggingface.co/spaces/" in frontend_url:
+        spaces_path = frontend_url.split("huggingface.co/spaces/")[1]
+        owner_repo = spaces_path.replace("/", "-")
+        ping_url = f"https://{owner_repo}.hf.space/health"
+    else:
+        ping_url = frontend_url
+
     async with aiohttp.ClientSession() as session:
         while True:
             try:
                 logger.info(f"Sending keep-alive ping to frontend")
-                async with session.head(
-                    frontend_url,
+                async with session.get(
+                    ping_url,
                     timeout=aiohttp.ClientTimeout(total=10),
                     allow_redirects=False,
                 ):
                     pass
             except asyncio.TimeoutError:
-                logger.warning(f"Timeout pinging frontend at {frontend_url}")
+                logger.warning(f"Timeout pinging frontend at {ping_url}")
             except Exception as e:
                 logger.debug(f"Keep-alive ping error (not critical): {e}")
             await asyncio.sleep(interval_seconds)
