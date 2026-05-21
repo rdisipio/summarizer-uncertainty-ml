@@ -12,6 +12,7 @@ logging.basicConfig(
     format="%(asctime)s %(levelname)s %(name)s: %(message)s",
     datefmt="%Y-%m-%dT%H:%M:%S",
 )
+logging.getLogger("uvicorn.access").setLevel(logging.WARNING)
 
 
 def main() -> None:
