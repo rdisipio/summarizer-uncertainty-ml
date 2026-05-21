@@ -88,8 +88,13 @@ class MCDropoutBackend(RuleBasedSentenceBackend):
         logger.info("Model ready (%d parameters)", sum(p.numel() for p in self._model.parameters()))
         logger.info("Running warm-up forward pass")
         with torch.no_grad():
-            _dummy = torch.tensor([[self._model.config.decoder_start_token_id]], device=self._device)
-            self._model(input_ids=_dummy, decoder_input_ids=_dummy)
+            # Use realistic shapes so MPS/CUDA compiles kernels for the actual
+            # input sizes seen at inference time, not just the trivial (1,1) case.
+            _bos = self._model.config.decoder_start_token_id
+            _enc = torch.full((1, 512), _bos, dtype=torch.long, device=self._device)
+            _enc_mask = torch.ones(1, 512, dtype=torch.long, device=self._device)
+            _dec = torch.full((1, 64), _bos, dtype=torch.long, device=self._device)
+            self._model(input_ids=_enc, attention_mask=_enc_mask, decoder_input_ids=_dec)
         logger.info("Warm-up complete")
 
     def prepare_summary(
