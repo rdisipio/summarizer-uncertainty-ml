@@ -7,12 +7,19 @@ import os
 
 import uvicorn
 
+
+class HealthCheckFilter(logging.Filter):
+    def filter(self, record: logging.LogRecord) -> bool:
+        return "/health" not in record.getMessage()
+
+
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s %(levelname)s %(name)s: %(message)s",
     datefmt="%Y-%m-%dT%H:%M:%S",
 )
-logging.getLogger("uvicorn.access").setLevel(logging.WARNING)
+access_logger = logging.getLogger("uvicorn.access")
+access_logger.addFilter(HealthCheckFilter())
 
 
 def main() -> None:
