@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import logging
 import os
+import time
 from typing import Sequence
 
 logger = logging.getLogger(__name__)
@@ -87,6 +88,7 @@ class MCDropoutBackend(RuleBasedSentenceBackend):
         self._model.train()
         logger.info("Model ready (%d parameters)", sum(p.numel() for p in self._model.parameters()))
         logger.info("Running warm-up forward pass")
+        _t0 = time.monotonic()
         with torch.no_grad():
             # Warm up with multiple representative shapes to avoid JIT compilation
             # overhead on the first real request with a different shape.
@@ -97,7 +99,7 @@ class MCDropoutBackend(RuleBasedSentenceBackend):
                     _enc_mask = torch.ones(1, enc_len, dtype=torch.long, device=self._device)
                     _dec = torch.full((1, dec_len), _bos, dtype=torch.long, device=self._device)
                     self._model(input_ids=_enc, attention_mask=_enc_mask, decoder_input_ids=_dec)
-        logger.info("Warm-up complete")
+        logger.info("Warm-up complete (%.2fs)", time.monotonic() - _t0)
 
     def prepare_summary(
         self,
