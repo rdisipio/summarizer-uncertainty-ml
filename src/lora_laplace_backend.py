@@ -235,9 +235,12 @@ class LoraLaplaceBackend(RuleBasedSentenceBackend):
         encoder_attention_mask = encoder_encoding["attention_mask"].to(self._device)
         logger.info("Source tokenized: %d tokens", encoder_input_ids.shape[1])
 
-        # Pad encoder to fixed shape for kernel reuse.
+        # Enforce fixed encoder shape for kernel reuse.
         enc_len = encoder_input_ids.shape[1]
-        if enc_len < self.ENCODER_PAD_LENGTH:
+        if enc_len > self.ENCODER_PAD_LENGTH:
+            encoder_input_ids = encoder_input_ids[:, : self.ENCODER_PAD_LENGTH]
+            encoder_attention_mask = encoder_attention_mask[:, : self.ENCODER_PAD_LENGTH]
+        elif enc_len < self.ENCODER_PAD_LENGTH:
             pad_len = self.ENCODER_PAD_LENGTH - enc_len
             encoder_input_ids = torch.nn.functional.pad(
                 encoder_input_ids, (0, pad_len), value=self._tokenizer.pad_token_id
