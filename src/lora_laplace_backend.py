@@ -175,13 +175,15 @@ class LoraLaplaceBackend(RuleBasedSentenceBackend):
         )
         logger.info("Running warm-up forward pass")
         with torch.no_grad():
-            # Use realistic shapes so MPS/CUDA compiles kernels for the actual
-            # input sizes seen at inference time, not just the trivial (1,1) case.
+            # Warm up with multiple representative shapes to avoid JIT compilation
+            # overhead on the first real request with a different shape.
             _bos = self._model.config.decoder_start_token_id
-            _enc = torch.full((1, 512), _bos, dtype=torch.long, device=self._device)
-            _enc_mask = torch.ones(1, 512, dtype=torch.long, device=self._device)
-            _dec = torch.full((1, 64), _bos, dtype=torch.long, device=self._device)
-            self._model(input_ids=_enc, attention_mask=_enc_mask, decoder_input_ids=_dec)
+            for enc_len in [128, 256]:
+                for dec_len in [32, 64]:
+                    _enc = torch.full((1, enc_len), _bos, dtype=torch.long, device=self._device)
+                    _enc_mask = torch.ones(1, enc_len, dtype=torch.long, device=self._device)
+                    _dec = torch.full((1, dec_len), _bos, dtype=torch.long, device=self._device)
+                    self._model(input_ids=_enc, attention_mask=_enc_mask, decoder_input_ids=_dec)
         logger.info("Warm-up complete")
 
     # ------------------------------------------------------------------
@@ -298,6 +300,8 @@ class LoraLaplaceBackend(RuleBasedSentenceBackend):
         baseline.  Restoration happens in a finally block so partial failures
         cannot leave the model in a perturbed state.
         """
+        import time as _time
+
         encoder_input_ids: torch.Tensor = prepared_summary.metadata["encoder_input_ids"]
         encoder_attention_mask: torch.Tensor = prepared_summary.metadata[
             "encoder_attention_mask"
@@ -308,21 +312,37 @@ class LoraLaplaceBackend(RuleBasedSentenceBackend):
             "sentence_token_slices"
         ]
 
+        t0 = _time.monotonic()
         self._apply_perturbation(posterior_sample.perturbations)
+        t_perturb = _time.monotonic() - t0
+
         try:
+            t0 = _time.monotonic()
             with torch.no_grad():
                 outputs = self._model(
                     input_ids=encoder_input_ids,
                     attention_mask=encoder_attention_mask,
                     decoder_input_ids=decoder_input_ids,
                 )
+            t_forward = _time.monotonic() - t0
         finally:
             self._restore_baseline()
 
         # logits: (1, decoder_seq_len, vocab_size)
         logits = outputs.logits.squeeze(0)
+        t0 = _time.monotonic()
         probs = F.softmax(logits, dim=-1).cpu().float().numpy()
         log_probs = F.log_softmax(logits, dim=-1).cpu().float().numpy()
+        t_softmax = _time.monotonic() - t0
+
+        logger.debug(
+            "Forward pass: perturb=%.2fs forward=%.2fs softmax=%.2fs encoder_shape=%s decoder_shape=%s",
+            t_perturb,
+            t_forward,
+            t_softmax,
+            encoder_input_ids.shape,
+            decoder_input_ids.shape,
+        )
 
         sentence_distributions: list[SampledSentenceDistributions] = []
         for sentence_spec in prepared_summary.sentences:
