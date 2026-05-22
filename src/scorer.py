@@ -199,20 +199,6 @@ class SummaryUncertaintyScorer:
             sentence.sentence_index: [] for sentence in prepared_summary.sentences
         }
 
-        # Warm up with the actual prepared shapes to avoid kernel compilation
-        # overhead on the first real sample. Use seed=-1 to avoid interfering
-        # with reproducible sampling.
-        try:
-            logger.info("Per-request warm-up with actual input shapes")
-            t_warmup = time.monotonic()
-            dummy_sample = self._posterior_sampler.sample(seed=0)
-            self._backend.score_posterior_sample(
-                prepared_summary=prepared_summary, posterior_sample=dummy_sample
-            )
-            logger.info("Per-request warm-up done in %.2fs", time.monotonic() - t_warmup)
-        except Exception as e:
-            logger.warning("Per-request warm-up failed (non-critical): %s", e)
-
         t_loop_start = time.monotonic()
         for sample_index in range(sample_count):
             t_sample_start = time.monotonic()

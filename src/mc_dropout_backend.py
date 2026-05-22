@@ -67,6 +67,12 @@ class MCDropoutBackend(RuleBasedSentenceBackend):
         device: Torch device string.  Auto-detected when None.
     """
 
+    # Fixed shapes for all forward passes to enable kernel pre-compilation.
+    # All encoder inputs are padded to ENCODER_PAD_LENGTH, decoder to DECODER_PAD_LENGTH.
+    # Attention masks handle the padding so results are identical to variable-length inference.
+    ENCODER_PAD_LENGTH = 512
+    DECODER_PAD_LENGTH = 256
+
     def __init__(
         self,
         model_name: str = _DEFAULT_MODEL,
@@ -90,15 +96,19 @@ class MCDropoutBackend(RuleBasedSentenceBackend):
         logger.info("Running warm-up forward pass")
         _t0 = time.monotonic()
         with torch.no_grad():
-            # Warm up with multiple representative shapes to avoid JIT compilation
-            # overhead on the first real request with a different shape.
+            # Warm up with fixed padded shapes so all forward passes reuse
+            # pre-compiled kernels, regardless of actual sequence length.
             _bos = self._model.config.decoder_start_token_id
-            for enc_len in [128, 256]:
-                for dec_len in [32, 64]:
-                    _enc = torch.full((1, enc_len), _bos, dtype=torch.long, device=self._device)
-                    _enc_mask = torch.ones(1, enc_len, dtype=torch.long, device=self._device)
-                    _dec = torch.full((1, dec_len), _bos, dtype=torch.long, device=self._device)
-                    self._model(input_ids=_enc, attention_mask=_enc_mask, decoder_input_ids=_dec)
+            _enc = torch.full(
+                (1, self.ENCODER_PAD_LENGTH), _bos, dtype=torch.long, device=self._device
+            )
+            _enc_mask = torch.ones(
+                1, self.ENCODER_PAD_LENGTH, dtype=torch.long, device=self._device
+            )
+            _dec = torch.full(
+                (1, self.DECODER_PAD_LENGTH), _bos, dtype=torch.long, device=self._device
+            )
+            self._model(input_ids=_enc, attention_mask=_enc_mask, decoder_input_ids=_dec)
         logger.info("Warm-up complete (%.2fs)", time.monotonic() - _t0)
 
     def prepare_summary(
@@ -136,6 +146,17 @@ class MCDropoutBackend(RuleBasedSentenceBackend):
         encoder_input_ids = encoder_encoding["input_ids"].to(self._device)
         encoder_attention_mask = encoder_encoding["attention_mask"].to(self._device)
         logger.info("Source tokenized: %d tokens", encoder_input_ids.shape[1])
+
+        # Pad encoder to fixed shape for kernel reuse.
+        enc_len = encoder_input_ids.shape[1]
+        if enc_len < self.ENCODER_PAD_LENGTH:
+            pad_len = self.ENCODER_PAD_LENGTH - enc_len
+            encoder_input_ids = torch.nn.functional.pad(
+                encoder_input_ids, (0, pad_len), value=self._tokenizer.pad_token_id
+            )
+            encoder_attention_mask = torch.nn.functional.pad(
+                encoder_attention_mask, (0, pad_len), value=0
+            )
 
         # Encode the full summary without special tokens so that
         # return_offsets_mapping gives character spans relative to summary.
@@ -192,6 +213,14 @@ class MCDropoutBackend(RuleBasedSentenceBackend):
             dim=1,
         )
         logger.info("Decoder input ready: %d tokens (including BOS)", decoder_input_ids.shape[1])
+
+        # Pad decoder to fixed shape for kernel reuse.
+        dec_len = decoder_input_ids.shape[1]
+        if dec_len < self.DECODER_PAD_LENGTH:
+            pad_len = self.DECODER_PAD_LENGTH - dec_len
+            decoder_input_ids = torch.nn.functional.pad(
+                decoder_input_ids, (0, pad_len), value=self._tokenizer.pad_token_id
+            )
 
         metadata = dict(prepared.metadata)
         metadata["encoder_input_ids"] = encoder_input_ids
