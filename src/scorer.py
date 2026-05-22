@@ -205,7 +205,7 @@ class SummaryUncertaintyScorer:
         try:
             logger.info("Per-request warm-up with actual input shapes")
             t_warmup = time.monotonic()
-            dummy_sample = self._posterior_sampler.sample(seed=-1)
+            dummy_sample = self._posterior_sampler.sample(seed=0)
             self._backend.score_posterior_sample(
                 prepared_summary=prepared_summary, posterior_sample=dummy_sample
             )
