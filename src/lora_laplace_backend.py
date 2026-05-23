@@ -300,9 +300,11 @@ class LoraLaplaceBackend(RuleBasedSentenceBackend):
             "Decoder input ready: %d tokens (including BOS)", decoder_input_ids.shape[1]
         )
 
-        # Pad decoder to fixed shape for kernel reuse.
+        # Enforce fixed decoder shape for kernel reuse.
         dec_len = decoder_input_ids.shape[1]
-        if dec_len < self.DECODER_PAD_LENGTH:
+        if dec_len > self.DECODER_PAD_LENGTH:
+            decoder_input_ids = decoder_input_ids[:, : self.DECODER_PAD_LENGTH]
+        elif dec_len < self.DECODER_PAD_LENGTH:
             pad_len = self.DECODER_PAD_LENGTH - dec_len
             decoder_input_ids = torch.nn.functional.pad(
                 decoder_input_ids, (0, pad_len), value=self._tokenizer.pad_token_id
