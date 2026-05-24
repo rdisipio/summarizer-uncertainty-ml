@@ -379,13 +379,25 @@ class LoraLaplaceBackend(RuleBasedSentenceBackend):
         )
 
         sentence_distributions: list[SampledSentenceDistributions] = []
+        # The decoder input included an initial BOS token, so logits/probs
+        # are offset by one relative to `summary_token_ids` (which exclude BOS).
+        bos_offset = 1
         for sentence_spec in prepared_summary.sentences:
             tok_start, tok_end = sentence_token_slices[sentence_spec.sentence_index]
-            target_ids = np.array(
-                summary_token_ids[tok_start:tok_end], dtype=np.int64
-            )
-            token_probs = probs[tok_start:tok_end, :]
-            token_log_probs = log_probs[tok_start:tok_end, :]
+            target_ids = np.array(summary_token_ids[tok_start:tok_end], dtype=np.int64)
+
+            start = bos_offset + tok_start
+            end = bos_offset + tok_end
+            # Guard against truncated decoder outputs when fixed padding was applied.
+            if end > probs.shape[0]:
+                raise ValueError(
+                    f"Decoder outputs too short for sentence {sentence_spec.sentence_index}: "
+                    f"need rows up to {end}, got {probs.shape[0]}"
+                )
+
+            token_probs = probs[start:end, :]
+            token_log_probs = log_probs[start:end, :]
+
             sentence_distributions.append(
                 SampledSentenceDistributions(
                     sentence_index=sentence_spec.sentence_index,
