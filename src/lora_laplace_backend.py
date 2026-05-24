@@ -310,17 +310,55 @@ class LoraLaplaceBackend(RuleBasedSentenceBackend):
                 decoder_input_ids, (0, pad_len), value=self._tokenizer.pad_token_id
             )
 
+        # If the decoder inputs were truncated to a fixed length, we must
+        # also truncate the stored summary token ids and sentence token
+        # slices so downstream scoring doesn't reference rows that no
+        # longer exist in the model outputs.
+        max_allowed_summary_tokens = decoder_input_ids.shape[1] - 1  # exclude BOS
+
+        # Truncate the flat token id list (used to build target arrays).
+        if len(summary_token_ids) > max_allowed_summary_tokens:
+            logger.warning(
+                "Summary truncated to %d decoder tokens (was %d)",
+                max_allowed_summary_tokens,
+                len(summary_token_ids),
+            )
+            summary_token_ids = summary_token_ids[:max_allowed_summary_tokens]
+
+        # Adjust sentence slices and drop any sentences that no longer
+        # have tokens after truncation.
+        adjusted_sentence_slices: dict[int, tuple[int, int]] = {}
+        adjusted_sentences: list = []
+        for sentence_spec in prepared.sentences:
+            tok_start, tok_end = sentence_token_slices[sentence_spec.sentence_index]
+            if tok_start >= max_allowed_summary_tokens:
+                logger.warning(
+                    "Dropping sentence %d: starts at token %d beyond truncated summary",
+                    sentence_spec.sentence_index,
+                    tok_start,
+                )
+                continue
+            tok_end = min(tok_end, max_allowed_summary_tokens)
+            if tok_end <= tok_start:
+                logger.warning(
+                    "Dropping sentence %d: no remaining tokens after truncation",
+                    sentence_spec.sentence_index,
+                )
+                continue
+            adjusted_sentence_slices[sentence_spec.sentence_index] = (tok_start, tok_end)
+            adjusted_sentences.append(sentence_spec)
+
         metadata = dict(prepared.metadata)
         metadata["encoder_input_ids"] = encoder_input_ids
         metadata["encoder_attention_mask"] = encoder_attention_mask
         metadata["decoder_input_ids"] = decoder_input_ids
         metadata["summary_token_ids"] = summary_token_ids
-        metadata["sentence_token_slices"] = sentence_token_slices
+        metadata["sentence_token_slices"] = adjusted_sentence_slices
 
         return PreparedSummary(
             source=prepared.source,
             summary=prepared.summary,
-            sentences=prepared.sentences,
+            sentences=tuple(adjusted_sentences),
             metadata=metadata,
         )
 
