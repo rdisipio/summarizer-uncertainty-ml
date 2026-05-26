@@ -145,8 +145,8 @@ class LoraLaplaceBackend(RuleBasedSentenceBackend):
     # Fixed shapes for all forward passes to enable kernel pre-compilation.
     # All encoder inputs are padded to ENCODER_PAD_LENGTH, decoder to DECODER_PAD_LENGTH.
     # Attention masks handle the padding so results are identical to variable-length inference.
-    ENCODER_PAD_LENGTH = os.environ.get("LORA_LAPLACE_ENCODER_PAD_LENGTH", 512)
-    DECODER_PAD_LENGTH = os.environ.get("LORA_LAPLACE_DECODER_PAD_LENGTH", 256)
+    ENCODER_PAD_LENGTH = int(os.environ.get("LORA_LAPLACE_ENCODER_PAD_LENGTH", 512))
+    DECODER_PAD_LENGTH = int(os.environ.get("LORA_LAPLACE_DECODER_PAD_LENGTH", 256))
 
     def __init__(
         self,
