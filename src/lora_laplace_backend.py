@@ -53,7 +53,7 @@ from .scorer import (
 
 logger = logging.getLogger(__name__)
 
-_DEFAULT_MODEL = "facebook/bart-large-xsum"
+_DEFAULT_MODEL = "facebook/bart-base"
 
 
 @dataclass

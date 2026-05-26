@@ -280,7 +280,7 @@ def _build_default_service() -> ScoringService:
     - ``MC_DROPOUT_DEVICE`` – torch device string, e.g. ``cpu`` or ``cuda`` (auto-detected when unset)
 
     LoRA-Laplace environment variables:
-    - ``LORA_BASE_MODEL``   – HuggingFace base model identifier (default: facebook/bart-large-xsum)
+    - ``LORA_BASE_MODEL``   – HuggingFace base model identifier (default: facebook/bart-base)
     - ``LORA_ADAPTER_PATH`` – path to the PEFT adapter checkpoint directory (required)
     - ``LORA_SAMPLER_PATH`` – path to a pre-fitted laplace_sampler.npz (required);
                               fit offline with compute_uncertainty_scores_lora_laplace.py --save-sampler
@@ -303,7 +303,7 @@ def _build_default_service() -> ScoringService:
         from .lora_laplace_backend import LoraLaplaceBackend, load_laplace_sampler
         from .scorer import SummaryUncertaintyScorer
 
-        base_model_name = os.environ.get("LORA_BASE_MODEL", "facebook/bart-large-xsum")
+        base_model_name = os.environ.get("LORA_BASE_MODEL", "facebook/bart-base")
         adapter_path = os.environ.get("LORA_ADAPTER_PATH", "")
         sampler_path = os.environ.get("LORA_SAMPLER_PATH", "")
         device = os.environ.get("LORA_DEVICE") or None
