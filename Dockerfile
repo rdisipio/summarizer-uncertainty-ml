@@ -11,9 +11,9 @@ ENV LORA_HUB_REPO=rdisipio/summarizer-uncertainty-models
 ENV LORA_HUB_SUBFOLDER=bart-base-lora-laplace
 ENV LORA_ADAPTER_PATH=/app/models/bart-base-lora-laplace
 ENV LORA_SAMPLER_PATH=/app/models/bart-base-lora-laplace/laplace_sampler.npz
-ENV QUANTILE_CONFIG_PATH=/app/models/bart-base-lora-laplace/uncertainty_quantiles_lora_laplace.json
-ENV AMBIGUITY_QUANTILE_CONFIG_PATH=/app/models/bart-base-lora-laplace/ambiguity_quantiles_lora_laplace.json
-ENV CONSISTENCY_QUANTILE_CONFIG_PATH=/app/models/bart-base-lora-laplace/consistency_quantiles_lora_laplace.json
+ENV QUANTILE_CONFIG_PATH=/app/config/uncertainty_quantiles_lora_laplace.json
+ENV AMBIGUITY_QUANTILE_CONFIG_PATH=/app/config/ambiguity_quantiles_lora_laplace.json
+ENV CONSISTENCY_QUANTILE_CONFIG_PATH=/app/config/consistency_quantiles_lora_laplace.json
 ENV API_TOKEN=
 ENV PORT=7860
 
