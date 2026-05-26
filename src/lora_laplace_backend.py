@@ -518,6 +518,9 @@ def fit_laplace_approximation(
             "No trainable parameters found.  Ensure the PeftModel has LoRA "
             "adapters with requires_grad=True."
         )
+    # cast LoRA params to float32 for numerically stable Fisher estimation; bf16
+    for _, param in lora_params:
+        param.data = param.data.float()
 
     param_names = [name for name, _ in lora_params]
     param_shapes = [tuple(param.shape) for _, param in lora_params]
@@ -588,6 +591,14 @@ def fit_laplace_approximation(
 
     # Average over calibration samples.
     fisher_diag /= len(calibration_data)
+
+    logger.info(
+        "Fisher diag: mean=%.4e  median=%.4e  max=%.4e  near-zero(< 1e-8)=%.1f%%",
+        float(fisher_diag.mean()),
+        float(np.median(fisher_diag)),
+        float(fisher_diag.max()),
+        float((fisher_diag < 1e-8).mean() * 100),
+    )
 
     posterior_variance = 1.0 / (fisher_diag + prior_precision)
 
