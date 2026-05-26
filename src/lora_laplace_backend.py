@@ -153,6 +153,8 @@ class LoraLaplaceBackend(RuleBasedSentenceBackend):
         peft_model: PeftModel,
         tokenizer: Any,
         device: str | None = None,
+        encoder_pad_length: int | None = None,
+        decoder_pad_length: int | None = None,
     ) -> None:
         if device is None:
             if torch.cuda.is_available():
@@ -161,6 +163,10 @@ class LoraLaplaceBackend(RuleBasedSentenceBackend):
                 device = "mps"
             else:
                 device = "cpu"
+        if encoder_pad_length is not None:
+            self.ENCODER_PAD_LENGTH = encoder_pad_length
+        if decoder_pad_length is not None:
+            self.DECODER_PAD_LENGTH = decoder_pad_length
         self._device = device
         self._model = peft_model.to(device)
         self._model.eval()
