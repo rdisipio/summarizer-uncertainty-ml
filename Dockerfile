@@ -6,14 +6,14 @@ ENV PIP_NO_CACHE_DIR=1
 ENV PIPENV_VENV_IN_PROJECT=0
 ENV NLTK_DATA=/usr/local/share/nltk_data
 ENV SCORING_BACKEND=lora_laplace
-ENV LORA_BASE_MODEL=facebook/bart-large-xsum
+ENV LORA_BASE_MODEL=facebook/bart-base
 ENV LORA_HUB_REPO=rdisipio/summarizer-uncertainty-models
-ENV LORA_HUB_SUBFOLDER=bart-large-xsum-lora-laplace
-ENV LORA_ADAPTER_PATH=/app/models/bart-large-xsum-lora-laplace
-ENV LORA_SAMPLER_PATH=/app/models/bart-large-xsum-lora-laplace/laplace_sampler.npz
-ENV QUANTILE_CONFIG_PATH=/app/models/bart-large-xsum-lora-laplace/uncertainty_quantiles_lora_laplace.json
-ENV AMBIGUITY_QUANTILE_CONFIG_PATH=/app/models/bart-large-xsum-lora-laplace/ambiguity_quantiles_lora_laplace.json
-ENV CONSISTENCY_QUANTILE_CONFIG_PATH=/app/models/bart-large-xsum-lora-laplace/consistency_quantiles_lora_laplace.json
+ENV LORA_HUB_SUBFOLDER=bart-base-lora-laplace
+ENV LORA_ADAPTER_PATH=/app/models/bart-base-lora-laplace
+ENV LORA_SAMPLER_PATH=/app/models/bart-base-lora-laplace/laplace_sampler.npz
+ENV QUANTILE_CONFIG_PATH=/app/models/bart-base-lora-laplace/uncertainty_quantiles_lora_laplace.json
+ENV AMBIGUITY_QUANTILE_CONFIG_PATH=/app/models/bart-base-lora-laplace/ambiguity_quantiles_lora_laplace.json
+ENV CONSISTENCY_QUANTILE_CONFIG_PATH=/app/models/bart-base-lora-laplace/consistency_quantiles_lora_laplace.json
 ENV API_TOKEN=
 ENV PORT=7860
 
@@ -38,7 +38,7 @@ RUN python - <<'EOF'
 from huggingface_hub import snapshot_download
 snapshot_download(
     repo_id="rdisipio/summarizer-uncertainty-models",
-    allow_patterns="bart-large-xsum-lora-laplace/*",
+    allow_patterns="bart-base-lora-laplace/*",
     local_dir="/app/models",
 )
 EOF
