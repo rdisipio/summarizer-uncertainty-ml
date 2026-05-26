@@ -320,17 +320,16 @@ def _build_default_service() -> ScoringService:
         import torch
 
         base_model = AutoModelForSeq2SeqLM.from_pretrained(base_model_name)
+        peft_model = PeftModel.from_pretrained(base_model, adapter_path, is_trainable=True)
+        tokenizer = AutoTokenizer.from_pretrained(base_model_name)
 
-        # Apply 8-bit dynamic quantization to reduce memory and speed up CPU inference
-        logger.info("Applying 8-bit dynamic quantization to base model")
-        base_model = torch.quantization.quantize_dynamic(
-            base_model,
+        # Apply 8-bit dynamic quantization after LoRA adapter is loaded
+        logger.info("Applying 8-bit dynamic quantization to LoRA model")
+        peft_model = torch.quantization.quantize_dynamic(
+            peft_model,
             {torch.nn.Linear},
             dtype=torch.qint8
         )
-
-        peft_model = PeftModel.from_pretrained(base_model, adapter_path, is_trainable=True)
-        tokenizer = AutoTokenizer.from_pretrained(base_model_name)
         backend = LoraLaplaceBackend(peft_model=peft_model, tokenizer=tokenizer, device=device)
         sampler = load_laplace_sampler(sampler_path)
         return SummaryUncertaintyScorer(backend=backend, posterior_sampler=sampler)
