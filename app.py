@@ -175,7 +175,7 @@ _api_token = os.environ.get("API_TOKEN") or None
 
 
 @demo.app.post("/score")
-async def score_endpoint(
+def score_endpoint(
     request: ScoreRequest,
     x_api_token: str | None = Header(default=None),
 ) -> dict:
@@ -191,12 +191,12 @@ async def score_endpoint(
 
 
 @demo.app.get("/health")
-async def health() -> dict:
+def health() -> dict:
     return {"status": "ok"}
 
 
 @demo.app.get("/wake")
-async def wake() -> dict:
+def wake() -> dict:
     return {"status": "awake"}
 
 
