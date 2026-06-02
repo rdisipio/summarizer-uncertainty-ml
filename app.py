@@ -365,13 +365,29 @@ def probe0_direct_cuda() -> dict:
 
 @app.get("/probe/env")
 def probe_env() -> dict:
-    """No GPU — just return environment variables relevant to ZeroGPU."""
+    """No GPU — return environment and package versions relevant to ZeroGPU."""
+    import importlib.metadata as _meta
+
+    def _ver(pkg: str) -> str:
+        try:
+            return _meta.version(pkg)
+        except _meta.PackageNotFoundError:
+            return "not-installed"
+
     return {
         "SPACES_ZERO_GPU": os.environ.get("SPACES_ZERO_GPU"),
         "CUDA_VISIBLE_DEVICES": os.environ.get("CUDA_VISIBLE_DEVICES"),
         "is_zero_gpu_flag": _IS_ZERO_GPU,
         "backend_device": backend._device,
         "cuda_available_no_gpu_context": torch.cuda.is_available(),
+        "versions": {
+            "torch": _ver("torch"),
+            "spaces": _ver("spaces"),
+            "gradio": _ver("gradio"),
+            "gradio_client": _ver("gradio-client"),
+            "transformers": _ver("transformers"),
+            "peft": _ver("peft"),
+        },
     }
 
 
