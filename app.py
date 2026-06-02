@@ -339,6 +339,29 @@ def wake() -> dict:
     return {"status": "awake"}
 
 
+@app.get("/probe/0")
+def probe0_direct_cuda() -> dict:
+    """No @spaces.GPU, no Gradio queue — just try a real CUDA op in the main process.
+    Tells us whether cuda_available=True is a genuine GPU or the spaces patch."""
+    if not torch.cuda.is_available():
+        return {"cuda_available": False, "ok": False, "note": "is_available() false"}
+    try:
+        t = torch.zeros(4, device="cuda")
+        return {
+            "ok": True,
+            "device": str(t.device),
+            "device_name": torch.cuda.get_device_name(0),
+            "note": "real CUDA works in main process without @spaces.GPU",
+        }
+    except Exception as e:
+        return {
+            "ok": False,
+            "error": type(e).__name__,
+            "detail": str(e),
+            "note": "is_available()=True is the spaces patch; real CUDA not accessible here",
+        }
+
+
 @app.get("/probe/env")
 def probe_env() -> dict:
     """No GPU — just return environment variables relevant to ZeroGPU."""
