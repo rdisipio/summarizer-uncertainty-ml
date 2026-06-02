@@ -29,8 +29,11 @@ from transformers import AutoModelForSeq2SeqLM, AutoTokenizer
 
 from src.api_server import ScoreRequest, _serialize_summary_score
 from src.lora_laplace_backend import LoraLaplaceBackend, load_laplace_sampler
+from src.nltk_setup import ensure_sentence_tokenizer
 from src.normalization import load_quantile_normalizer
 from src.scorer import SummaryUncertaintyScorer
+
+ensure_sentence_tokenizer(download=True)
 
 logging.basicConfig(
     level=logging.INFO,
