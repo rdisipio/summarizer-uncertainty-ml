@@ -404,6 +404,13 @@ class LoraLaplaceBackend(RuleBasedSentenceBackend):
             "sentence_token_slices"
         ]
 
+        logger.info(
+            "score_posterior_sample: model.device=%s  enc_ids.device=%s  dec_ids.device=%s",
+            next(self._model.parameters()).device,
+            encoder_input_ids.device,
+            decoder_input_ids.device,
+        )
+
         t0 = time.monotonic()
         self._apply_perturbation(posterior_sample.perturbations)
         t_perturb = time.monotonic() - t0
@@ -417,6 +424,15 @@ class LoraLaplaceBackend(RuleBasedSentenceBackend):
                     decoder_input_ids=decoder_input_ids,
                 )
             t_forward = time.monotonic() - t0
+        except Exception:
+            logger.exception(
+                "score_posterior_sample: forward pass FAILED "
+                "(model.device=%s enc.device=%s dec.device=%s)",
+                next(self._model.parameters()).device,
+                encoder_input_ids.device,
+                decoder_input_ids.device,
+            )
+            raise
         finally:
             self._restore_baseline()
 
@@ -473,17 +489,26 @@ class LoraLaplaceBackend(RuleBasedSentenceBackend):
 
     def to(self, device: str) -> None:
         """Move the model and LoRA baseline weights to a different device."""
+        logger.info("LoraLaplaceBackend.to: %s -> %s", self._device, device)
         self._model.to(device)
+        logger.info("LoraLaplaceBackend.to: model moved; moving %d lora_baseline tensors", len(self._lora_baseline))
         self._lora_baseline = {
             name: tensor.to(device) for name, tensor in self._lora_baseline.items()
         }
         self._device = device
+        logger.info("LoraLaplaceBackend.to: done, device=%s", self._device)
 
     def _apply_perturbation(self, perturbations: dict[str, torch.Tensor]) -> None:
         """Set each LoRA parameter to its MAP value plus the sampled delta."""
         for name, delta in perturbations.items():
             param = self._model.get_parameter(name)
-            param.data.copy_(self._lora_baseline[name] + delta.to(param.device))
+            baseline = self._lora_baseline[name]
+            delta_moved = delta.to(param.device)
+            logger.debug(
+                "_apply_perturbation: %s  param.device=%s  baseline.device=%s  delta.device=%s->%s",
+                name, param.device, baseline.device, delta.device, delta_moved.device,
+            )
+            param.data.copy_(baseline + delta_moved)
 
     def _restore_baseline(self) -> None:
         """Restore all LoRA parameters to their saved MAP values."""

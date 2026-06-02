@@ -125,8 +125,19 @@ def _score(
     seed: int | None,
     compute_consistency: bool,
 ) -> dict:
+    import traceback as _tb
+    logger.info(
+        "_score ENTER: device=%s IS_ZERO_GPU=%s sample_count=%d seed=%s compute_consistency=%s",
+        backend._device, _IS_ZERO_GPU, sample_count, seed, compute_consistency,
+    )
     if _IS_ZERO_GPU:
-        backend.to("cuda")
+        logger.info("_score: moving backend to cuda")
+        try:
+            backend.to("cuda")
+            logger.info("_score: backend now on %s", backend._device)
+        except Exception:
+            logger.exception("_score: backend.to('cuda') FAILED")
+            raise
     try:
         result = scorer.score_summary(
             source=source,
@@ -134,13 +145,28 @@ def _score(
             sample_count=sample_count,
             seed=seed,
         )
+        logger.info("_score: score_summary succeeded, serializing")
+    except Exception:
+        logger.error("_score: score_summary FAILED\n%s", _tb.format_exc())
+        raise
     finally:
         if _IS_ZERO_GPU:
-            backend.to("cpu")
-    return _serialize_summary_score(
-        result, _normalizer, _amb_normalizer, _con_normalizer,
-        compute_consistency=compute_consistency,
-    )
+            logger.info("_score: moving backend back to cpu")
+            try:
+                backend.to("cpu")
+                logger.info("_score: backend now on %s", backend._device)
+            except Exception:
+                logger.exception("_score: backend.to('cpu') in finally FAILED")
+    try:
+        out = _serialize_summary_score(
+            result, _normalizer, _amb_normalizer, _con_normalizer,
+            compute_consistency=compute_consistency,
+        )
+        logger.info("_score EXIT: serialized %d sentence(s)", len(out.get("sentence_results", [])))
+        return out
+    except Exception:
+        logger.error("_score: _serialize_summary_score FAILED\n%s", _tb.format_exc())
+        raise
 
 # ---------------------------------------------------------------------------
 # Gradio UI
@@ -154,8 +180,20 @@ def _score_api(
     compute_consistency: bool,
 ) -> dict:
     """Gradio-queue-compatible wrapper called by both UI and the /score endpoint."""
+    import traceback as _tb
+    logger.info(
+        "_score_api ENTER: sample_count=%s seed_raw=%s compute_consistency=%s "
+        "src_len=%d smr_len=%d",
+        sample_count, seed_raw, compute_consistency, len(source), len(summary),
+    )
     seed = int(seed_raw) if seed_raw is not None and seed_raw >= 0 else None
-    return _score(source, summary, int(sample_count), seed, compute_consistency)
+    try:
+        result = _score(source, summary, int(sample_count), seed, compute_consistency)
+        logger.info("_score_api EXIT: OK")
+        return result
+    except Exception:
+        logger.error("_score_api: _score raised an exception\n%s", _tb.format_exc())
+        raise
 
 
 with gr.Blocks(title="Stylo — Summary Uncertainty") as demo:
