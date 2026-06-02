@@ -5,12 +5,16 @@ lives on CPU between requests and is moved to CUDA only for the duration of the
 @spaces.GPU-decorated call.  Locally (Mac MPS or CPU-only), @spaces.GPU is a
 no-op and the model stays on the auto-detected device throughout.
 
+Model artifacts are loaded from HuggingFace Hub at startup.  The variant is
+selected via the LORA_MODEL_VARIANT env var (default: bart-base-lora-laplace).
+
 Local usage:
-    LORA_BASE_MODEL=... LORA_ADAPTER_PATH=... LORA_SAMPLER_PATH=... pipenv run python app.py
+    LORA_MODEL_VARIANT=bart-base-lora-laplace pipenv run python app.py
 """
 
 from __future__ import annotations
 
+import json
 import logging
 import os
 from pathlib import Path
@@ -19,6 +23,7 @@ import gradio as gr
 import spaces
 import torch
 from fastapi import Header, HTTPException
+from huggingface_hub import snapshot_download
 from peft import PeftModel
 from transformers import AutoModelForSeq2SeqLM, AutoTokenizer
 
@@ -34,7 +39,6 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# ZeroGPU sets this env var; absent locally and in plain Docker spaces.
 _IS_ZERO_GPU = os.environ.get("SPACES_ZERO_GPU", "0") == "1"
 
 if _IS_ZERO_GPU:
@@ -49,35 +53,61 @@ else:
 logger.info("ZeroGPU=%s  init_device=%s", _IS_ZERO_GPU, _init_device)
 
 # ---------------------------------------------------------------------------
-# Model loading (runs once at startup, on CPU for ZeroGPU)
+# Download model artifacts from HF Hub
 # ---------------------------------------------------------------------------
 
-_base_model_name = os.environ.get("LORA_BASE_MODEL", "facebook/bart-base")
-_adapter_path = os.environ.get("LORA_ADAPTER_PATH", "")
-_sampler_path = os.environ.get("LORA_SAMPLER_PATH", "")
+_MODEL_REPO = "rdisipio/summarizer-uncertainty-models"
+_MODEL_VARIANT = os.environ.get("LORA_MODEL_VARIANT", "bart-base-lora-laplace")
 
-if not _adapter_path:
-    raise RuntimeError("LORA_ADAPTER_PATH must be set.")
-if not _sampler_path:
-    raise RuntimeError("LORA_SAMPLER_PATH must be set.")
+logger.info("Downloading model variant %r from %s", _MODEL_VARIANT, _MODEL_REPO)
+_snapshot_dir = Path(
+    snapshot_download(
+        repo_id=_MODEL_REPO,
+        allow_patterns=f"{_MODEL_VARIANT}/*",
+    )
+)
+_variant_dir = _snapshot_dir / _MODEL_VARIANT
+logger.info("Model artifacts at %s", _variant_dir)
+
+# Read the base model name directly from the adapter config.
+with open(_variant_dir / "adapter_config.json") as _f:
+    _base_model_name = json.load(_f)["base_model_name_or_path"]
+logger.info("Base model: %s", _base_model_name)
+
+# ---------------------------------------------------------------------------
+# Load model
+# ---------------------------------------------------------------------------
 
 _base_model = AutoModelForSeq2SeqLM.from_pretrained(_base_model_name)
-_peft_model = PeftModel.from_pretrained(_base_model, _adapter_path, is_trainable=True)
-_tokenizer = AutoTokenizer.from_pretrained(_base_model_name)
+_peft_model = PeftModel.from_pretrained(_base_model, str(_variant_dir), is_trainable=True)
+_tokenizer = AutoTokenizer.from_pretrained(str(_variant_dir))
 
 backend = LoraLaplaceBackend(peft_model=_peft_model, tokenizer=_tokenizer, device=_init_device)
-sampler = load_laplace_sampler(_sampler_path)
+sampler = load_laplace_sampler(str(_variant_dir / "laplace_sampler.npz"))
 scorer = SummaryUncertaintyScorer(backend=backend, posterior_sampler=sampler)
 
-_cfg = Path(__file__).parent / "config"
-_normalizer = load_quantile_normalizer(
-    os.environ.get("QUANTILE_CONFIG_PATH", str(_cfg / "uncertainty_quantiles_lora_laplace.json"))
+# Quantile configs live in the variant dir on the Hub; fall back to local copies.
+def _load_normalizer(hub_filename: str, env_var: str, local_filename: str) -> object:
+    env_path = os.environ.get(env_var)
+    if env_path:
+        return load_quantile_normalizer(env_path)
+    hub_path = _variant_dir / hub_filename
+    if hub_path.exists():
+        return load_quantile_normalizer(str(hub_path))
+    local_path = Path(__file__).parent / "config" / local_filename
+    return load_quantile_normalizer(str(local_path))
+
+_normalizer = _load_normalizer(
+    "uncertainty_quantiles_lora_laplace.json", "QUANTILE_CONFIG_PATH",
+    "uncertainty_quantiles_lora_laplace.json",
 )
-_amb_normalizer = load_quantile_normalizer(
-    os.environ.get("AMBIGUITY_QUANTILE_CONFIG_PATH", str(_cfg / "ambiguity_quantiles_lora_laplace.json"))
+_amb_normalizer = _load_normalizer(
+    "ambiguity_quantiles_lora_laplace.json", "AMBIGUITY_QUANTILE_CONFIG_PATH",
+    "ambiguity_quantiles_lora_laplace.json",
 )
-_con_normalizer = load_quantile_normalizer(
-    os.environ.get("CONSISTENCY_QUANTILE_CONFIG_PATH", str(_cfg / "consistency_quantiles_lora_laplace.json"))
+_con_normalizer = _load_normalizer(
+    "consistency_quantiles_lora_laplace.json", "CONSISTENCY_QUANTILE_CONFIG_PATH",
+    "consistency_quantiles_lora_laplace.json",
 )
 
 # ---------------------------------------------------------------------------
@@ -92,7 +122,6 @@ def _score(
     seed: int | None,
     compute_consistency: bool,
 ) -> dict:
-    """Run scoring on GPU (ZeroGPU) or the current device (local)."""
     if _IS_ZERO_GPU:
         backend.to("cuda")
     try:
@@ -112,8 +141,6 @@ def _score(
 
 # ---------------------------------------------------------------------------
 # Gradio UI
-# In Gradio 6, demo.app (a FastAPI subclass) is created when the `with` block
-# exits, so custom routes can be added to it before calling demo.launch().
 # ---------------------------------------------------------------------------
 
 with gr.Blocks(title="Stylo — Summary Uncertainty") as demo:
@@ -141,8 +168,8 @@ with gr.Blocks(title="Stylo — Summary Uncertainty") as demo:
         outputs=out_box,
     )
 
-# demo.app is a FastAPI-subclass instance created when the with-block exits.
-# Add /score, /health, /wake so the browser extension keeps working unchanged.
+# demo.app is created when the with-block exits (Gradio 6 __exit__).
+# Add the legacy /score endpoint so the browser extension works unchanged.
 
 _api_token = os.environ.get("API_TOKEN") or None
 
