@@ -44,16 +44,18 @@ logger = logging.getLogger(__name__)
 
 _IS_ZERO_GPU = os.environ.get("SPACES_ZERO_GPU", "0") == "1"
 
-if _IS_ZERO_GPU:
-    _init_device = "cpu"
-elif torch.cuda.is_available():
-    _init_device = "cuda"
+# Target device the model will live on after startup.
+# ZeroGPU patches torch.cuda.is_available() to return True even without a real
+# GPU, so this resolves to "cuda" on ZeroGPU Spaces, which is exactly what the
+# docs require: "models must be placed on cuda at the root module level."
+if torch.cuda.is_available():
+    _target_device = "cuda"
 elif torch.backends.mps.is_available():
-    _init_device = "mps"
+    _target_device = "mps"
 else:
-    _init_device = "cpu"
+    _target_device = "cpu"
 
-logger.info("ZeroGPU=%s  init_device=%s", _IS_ZERO_GPU, _init_device)
+logger.info("ZeroGPU=%s  target_device=%s", _IS_ZERO_GPU, _target_device)
 
 # ---------------------------------------------------------------------------
 # Download model artifacts from HF Hub
@@ -85,7 +87,15 @@ _base_model = AutoModelForSeq2SeqLM.from_pretrained(_base_model_name)
 _peft_model = PeftModel.from_pretrained(_base_model, str(_variant_dir), is_trainable=True)
 _tokenizer = AutoTokenizer.from_pretrained(str(_variant_dir))
 
-backend = LoraLaplaceBackend(peft_model=_peft_model, tokenizer=_tokenizer, device=_init_device)
+# Warm-up always runs on CPU (safe in ZeroGPU emulation mode and locally).
+# After warm-up, move the model to the target device so it is already on CUDA
+# when @spaces.GPU activates real GPU access — per ZeroGPU docs, models must
+# live on cuda from startup; moving them inside @spaces.GPU is discouraged.
+backend = LoraLaplaceBackend(peft_model=_peft_model, tokenizer=_tokenizer, device="cpu")
+if _target_device != "cpu":
+    logger.info("Moving backend to %s after warm-up", _target_device)
+    backend.to(_target_device)
+    logger.info("Backend on %s", backend._device)
 sampler = load_laplace_sampler(str(_variant_dir / "laplace_sampler.npz"))
 scorer = SummaryUncertaintyScorer(backend=backend, posterior_sampler=sampler)
 
@@ -126,24 +136,18 @@ def _score_inner(
     seed: int | None,
     compute_consistency: bool,
 ) -> dict:
+    # Model is already on the target device (placed there at startup).
+    # No device moves here — inside @spaces.GPU real CUDA is active.
     logger.info(
-        "_score_inner ENTER: device=%s IS_ZERO_GPU=%s sample_count=%d seed=%s",
-        backend._device, _IS_ZERO_GPU, sample_count, seed,
+        "_score_inner ENTER: device=%s sample_count=%d seed=%s",
+        backend._device, sample_count, seed,
     )
-    if _IS_ZERO_GPU:
-        backend.to("cuda")
-        logger.info("_score_inner: backend moved to %s", backend._device)
-    try:
-        result = scorer.score_summary(
-            source=source,
-            summary=summary,
-            sample_count=sample_count,
-            seed=seed,
-        )
-    finally:
-        if _IS_ZERO_GPU:
-            backend.to("cpu")
-            logger.info("_score_inner: backend moved back to %s", backend._device)
+    result = scorer.score_summary(
+        source=source,
+        summary=summary,
+        sample_count=sample_count,
+        seed=seed,
+    )
     out = _serialize_summary_score(
         result, _normalizer, _amb_normalizer, _con_normalizer,
         compute_consistency=compute_consistency,
@@ -182,17 +186,14 @@ def _probe2_cuda_tensor() -> dict:
 
 @spaces.GPU
 def _probe3_model_move() -> dict:
-    """Probe 3: move the backend model to CUDA, check a parameter device, move back."""
-    backend.to("cuda")
-    try:
-        sample_param = next(iter(backend._lora_baseline.values()))
-        return {
-            "ok": True,
-            "backend_device": backend._device,
-            "baseline_param_device": str(sample_param.device),
-        }
-    finally:
-        backend.to("cpu")
+    """Probe 3: confirm the model is already on the right device inside @spaces.GPU (no move needed)."""
+    sample_param = next(iter(backend._lora_baseline.values()))
+    return {
+        "ok": True,
+        "backend_device": backend._device,
+        "baseline_param_device": str(sample_param.device),
+        "model_param_device": str(next(backend._model.parameters()).device),
+    }
 
 
 # ---------------------------------------------------------------------------
