@@ -152,6 +152,50 @@ def _score_inner(
     return out
 
 # ---------------------------------------------------------------------------
+# ZeroGPU diagnostic probes — graduated complexity
+# ---------------------------------------------------------------------------
+# Each probe is a separate @spaces.GPU-decorated function registered as a
+# Gradio API endpoint.  Hit /probe/N in sequence to isolate where things break:
+#   1 — does @spaces.GPU itself work? (no model code at all)
+#   2 — can we allocate a CUDA tensor?
+#   3 — can we move the backend model to CUDA and back?
+# A non-GPU /probe/env endpoint returns CUDA_VISIBLE_DEVICES and related vars.
+
+@spaces.GPU
+def _probe1_spaces_gpu() -> dict:
+    """Probe 1: confirm the @spaces.GPU worker starts and CUDA is visible."""
+    return {
+        "cuda_available": torch.cuda.is_available(),
+        "device_count": torch.cuda.device_count(),
+        "device_name": (
+            torch.cuda.get_device_name(0) if torch.cuda.device_count() > 0 else None
+        ),
+    }
+
+
+@spaces.GPU
+def _probe2_cuda_tensor() -> dict:
+    """Probe 2: allocate a small tensor on CUDA."""
+    t = torch.zeros(4, device="cuda")
+    return {"ok": True, "device": str(t.device), "sum": float(t.sum())}
+
+
+@spaces.GPU
+def _probe3_model_move() -> dict:
+    """Probe 3: move the backend model to CUDA, check a parameter device, move back."""
+    backend.to("cuda")
+    try:
+        sample_param = next(iter(backend._lora_baseline.values()))
+        return {
+            "ok": True,
+            "backend_device": backend._device,
+            "baseline_param_device": str(sample_param.device),
+        }
+    finally:
+        backend.to("cpu")
+
+
+# ---------------------------------------------------------------------------
 # Gradio UI
 # ---------------------------------------------------------------------------
 
@@ -226,6 +270,18 @@ with gr.Blocks(title="Stylo — Summary Uncertainty") as demo:
         api_name="score_api",
     )
 
+    # Probe endpoints — hidden, no inputs, JSON output each.
+    with gr.Row(visible=False):
+        _p1_out = gr.JSON()
+        _p1_btn = gr.Button()
+        _p2_out = gr.JSON()
+        _p2_btn = gr.Button()
+        _p3_out = gr.JSON()
+        _p3_btn = gr.Button()
+    _p1_btn.click(fn=_probe1_spaces_gpu, inputs=[], outputs=[_p1_out], api_name="probe1")
+    _p2_btn.click(fn=_probe2_cuda_tensor, inputs=[], outputs=[_p2_out], api_name="probe2")
+    _p3_btn.click(fn=_probe3_model_move,  inputs=[], outputs=[_p3_out], api_name="probe3")
+
 # launch() creates a brand-new App instance (overwriting demo.app from __exit__),
 # so routes must be added to the app returned by launch(), not to demo.app above.
 # prevent_thread_lock=True makes launch() return immediately so we can do that.
@@ -281,6 +337,41 @@ def health() -> dict:
 @app.get("/wake")
 def wake() -> dict:
     return {"status": "awake"}
+
+
+@app.get("/probe/env")
+def probe_env() -> dict:
+    """No GPU — just return environment variables relevant to ZeroGPU."""
+    return {
+        "SPACES_ZERO_GPU": os.environ.get("SPACES_ZERO_GPU"),
+        "CUDA_VISIBLE_DEVICES": os.environ.get("CUDA_VISIBLE_DEVICES"),
+        "is_zero_gpu_flag": _IS_ZERO_GPU,
+        "backend_device": backend._device,
+        "cuda_available_no_gpu_context": torch.cuda.is_available(),
+    }
+
+
+def _call_probe(api_name: str) -> dict:
+    client = _get_gradio_client()
+    return client.predict(api_name=f"/{api_name}")
+
+
+@app.get("/probe/1")
+def probe1() -> dict:
+    """Probe 1: @spaces.GPU worker starts, CUDA visible (no model code)."""
+    return _call_probe("probe1")
+
+
+@app.get("/probe/2")
+def probe2() -> dict:
+    """Probe 2: allocate a CUDA tensor inside @spaces.GPU."""
+    return _call_probe("probe2")
+
+
+@app.get("/probe/3")
+def probe3() -> dict:
+    """Probe 3: move backend model to CUDA and back inside @spaces.GPU."""
+    return _call_probe("probe3")
 
 
 demo.block_thread()
