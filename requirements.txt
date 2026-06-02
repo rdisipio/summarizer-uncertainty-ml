@@ -1,0 +1,16 @@
+torch
+transformers
+peft
+spaces
+gradio
+numpy
+scipy
+scikit-learn
+nltk
+aiohttp
+backoff
+requests
+fastapi
+uvicorn
+python-dotenv
+tqdm
