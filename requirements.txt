@@ -2,6 +2,7 @@ transformers
 peft
 spaces
 gradio
+gradio_client
 numpy
 scipy
 scikit-learn

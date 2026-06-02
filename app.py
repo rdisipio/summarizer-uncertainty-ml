@@ -146,6 +146,18 @@ def _score(
 # Gradio UI
 # ---------------------------------------------------------------------------
 
+def _score_api(
+    source: str,
+    summary: str,
+    sample_count: float,  # gr.Number returns float
+    seed_raw: float,      # -1 sentinel means None
+    compute_consistency: bool,
+) -> dict:
+    """Gradio-queue-compatible wrapper called by both UI and the /score endpoint."""
+    seed = int(seed_raw) if seed_raw is not None and seed_raw >= 0 else None
+    return _score(source, summary, int(sample_count), seed, compute_consistency)
+
+
 with gr.Blocks(title="Stylo — Summary Uncertainty") as demo:
     gr.Markdown("## Summary Uncertainty Scorer")
     gr.Markdown(
@@ -166,9 +178,26 @@ with gr.Blocks(title="Stylo — Summary Uncertainty") as demo:
     run_btn = gr.Button("Score", variant="primary")
     out_box = gr.JSON(label="Sentence uncertainty results")
     run_btn.click(
-        fn=lambda src, smr: _score(src, smr, 10, None, True),
+        fn=lambda src, smr: _score_api(src, smr, 10, -1, True),
         inputs=[src_box, smr_box],
         outputs=out_box,
+    )
+
+    # Hidden full-parameter API function so gradio_client can call it with all
+    # options.  api_name exposes it at /run/score_api on the Gradio server.
+    with gr.Row(visible=False):
+        _h_src = gr.Textbox()
+        _h_smr = gr.Textbox()
+        _h_sc  = gr.Number(value=10)
+        _h_seed = gr.Number(value=-1)
+        _h_cc  = gr.Checkbox(value=True)
+        _h_out = gr.JSON()
+        _h_btn = gr.Button()
+    _h_btn.click(
+        fn=_score_api,
+        inputs=[_h_src, _h_smr, _h_sc, _h_seed, _h_cc],
+        outputs=[_h_out],
+        api_name="score_api",
     )
 
 # launch() creates a brand-new App instance (overwriting demo.app from __exit__),
@@ -180,6 +209,25 @@ _api_token = os.environ.get("API_TOKEN") or None
 demo.queue()
 app, _, _ = demo.launch(prevent_thread_lock=True, ssr_mode=False)
 
+# The /score FastAPI endpoint must NOT call @spaces.GPU directly from a thread —
+# ZeroGPU only works through Gradio's event queue.  We proxy the call via a
+# local gradio_client so it goes through the queue the same way the UI does.
+
+import threading
+from gradio_client import Client as GradioClient
+
+_gradio_client: GradioClient | None = None
+_gradio_client_lock = threading.Lock()
+
+
+def _get_gradio_client() -> GradioClient:
+    global _gradio_client
+    if _gradio_client is None:
+        with _gradio_client_lock:
+            if _gradio_client is None:
+                _gradio_client = GradioClient("http://localhost:7860", verbose=False)
+    return _gradio_client
+
 
 @app.post("/score")
 def score_endpoint(
@@ -188,12 +236,14 @@ def score_endpoint(
 ) -> dict:
     if _api_token and x_api_token != _api_token.strip():
         raise HTTPException(status_code=401, detail="Invalid or missing API token.")
-    return _score(
+    client = _get_gradio_client()
+    return client.predict(
         request.source,
         request.summary,
-        request.sample_count,
-        request.seed,
+        float(request.sample_count),
+        float(request.seed) if request.seed is not None else -1.0,
         request.compute_consistency,
+        api_name="/score_api",
     )
 
 
