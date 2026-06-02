@@ -175,7 +175,7 @@ with gr.Blocks(title="Stylo — Summary Uncertainty") as demo:
 _api_token = os.environ.get("API_TOKEN") or None
 
 demo.queue()
-app, _, _ = demo.launch(prevent_thread_lock=True)
+app, _, _ = demo.launch(prevent_thread_lock=True, ssr_mode=False)
 
 
 @app.post("/score")
