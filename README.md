@@ -1,14 +1,3 @@
----
-title: Sentence Uncertainty
-emoji: 🔬
-colorFrom: blue
-colorTo: indigo
-sdk: gradio
-sdk_version: 6.15.2
-hardware: zero-gpu
-pinned: false
----
-
 # summarizer-uncertainty-ml
 ML backend for the text summarizer with uncertainty
 
