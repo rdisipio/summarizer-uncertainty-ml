@@ -189,20 +189,33 @@ class LoraLaplaceBackend(RuleBasedSentenceBackend):
         )
         logger.info("Running warm-up forward pass")
         _t0 = time.monotonic()
-        with torch.no_grad():
-            # Warm up with fixed padded shapes so all forward passes reuse
-            # pre-compiled kernels, regardless of actual sequence length.
-            _bos = self._model.config.decoder_start_token_id
-            _enc = torch.full(
-                (1, self.ENCODER_PAD_LENGTH), _bos, dtype=torch.long, device=self._device
-            )
-            _enc_mask = torch.ones(
-                1, self.ENCODER_PAD_LENGTH, dtype=torch.long, device=self._device
-            )
-            _dec = torch.full(
-                (1, self.DECODER_PAD_LENGTH), _bos, dtype=torch.long, device=self._device
-            )
-            self._model(input_ids=_enc, attention_mask=_enc_mask, decoder_input_ids=_dec)
+        _bos = self._model.config.decoder_start_token_id
+        _enc = torch.full(
+            (1, self.ENCODER_PAD_LENGTH), _bos, dtype=torch.long, device=self._device
+        )
+        _enc_mask = torch.ones(
+            1, self.ENCODER_PAD_LENGTH, dtype=torch.long, device=self._device
+        )
+        _dec = torch.full(
+            (1, self.DECODER_PAD_LENGTH), _bos, dtype=torch.long, device=self._device
+        )
+        # Zero-perturbation dummy sample: exercises _apply_perturbation,
+        # the perturbed forward pass, _restore_baseline, and the MPS→CPU
+        # logit readback so none of these paths are cold on the first real request.
+        _zero_perturbations = {
+            name: torch.zeros_like(baseline)
+            for name, baseline in self._lora_baseline.items()
+        }
+        self._apply_perturbation(_zero_perturbations)
+        try:
+            with torch.no_grad():
+                _outputs = self._model(
+                    input_ids=_enc, attention_mask=_enc_mask, decoder_input_ids=_dec
+                )
+            # Force MPS→CPU readback to pre-warm the transfer path.
+            _ = F.softmax(_outputs.logits, dim=-1).cpu().float().numpy()
+        finally:
+            self._restore_baseline()
         logger.info("Warm-up complete (%.2fs)", time.monotonic() - _t0)
 
     # ------------------------------------------------------------------
@@ -457,6 +470,14 @@ class LoraLaplaceBackend(RuleBasedSentenceBackend):
     # ------------------------------------------------------------------
     # Internal helpers
     # ------------------------------------------------------------------
+
+    def to(self, device: str) -> None:
+        """Move the model and LoRA baseline weights to a different device."""
+        self._model.to(device)
+        self._lora_baseline = {
+            name: tensor.to(device) for name, tensor in self._lora_baseline.items()
+        }
+        self._device = device
 
     def _apply_perturbation(self, perturbations: dict[str, torch.Tensor]) -> None:
         """Set each LoRA parameter to its MAP value plus the sampled delta."""

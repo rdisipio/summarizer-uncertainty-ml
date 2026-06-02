@@ -3,7 +3,8 @@ title: Sentence Uncertainty
 emoji: 🔬
 colorFrom: blue
 colorTo: indigo
-sdk: docker
+sdk: gradio
+sdk_version: 6.15.2
 pinned: false
 ---
 
