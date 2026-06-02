@@ -117,27 +117,22 @@ _con_normalizer = _load_normalizer(
 # GPU-gated scoring
 # ---------------------------------------------------------------------------
 
-@spaces.GPU
-def _score(
+# _score_inner contains the actual work.  It must be called from within a
+# @spaces.GPU-decorated function so the GPU worker is already live when it runs.
+def _score_inner(
     source: str,
     summary: str,
     sample_count: int,
     seed: int | None,
     compute_consistency: bool,
 ) -> dict:
-    import traceback as _tb
     logger.info(
-        "_score ENTER: device=%s IS_ZERO_GPU=%s sample_count=%d seed=%s compute_consistency=%s",
-        backend._device, _IS_ZERO_GPU, sample_count, seed, compute_consistency,
+        "_score_inner ENTER: device=%s IS_ZERO_GPU=%s sample_count=%d seed=%s",
+        backend._device, _IS_ZERO_GPU, sample_count, seed,
     )
     if _IS_ZERO_GPU:
-        logger.info("_score: moving backend to cuda")
-        try:
-            backend.to("cuda")
-            logger.info("_score: backend now on %s", backend._device)
-        except Exception:
-            logger.exception("_score: backend.to('cuda') FAILED")
-            raise
+        backend.to("cuda")
+        logger.info("_score_inner: backend moved to %s", backend._device)
     try:
         result = scorer.score_summary(
             source=source,
@@ -145,33 +140,25 @@ def _score(
             sample_count=sample_count,
             seed=seed,
         )
-        logger.info("_score: score_summary succeeded, serializing")
-    except Exception:
-        logger.error("_score: score_summary FAILED\n%s", _tb.format_exc())
-        raise
     finally:
         if _IS_ZERO_GPU:
-            logger.info("_score: moving backend back to cpu")
-            try:
-                backend.to("cpu")
-                logger.info("_score: backend now on %s", backend._device)
-            except Exception:
-                logger.exception("_score: backend.to('cpu') in finally FAILED")
-    try:
-        out = _serialize_summary_score(
-            result, _normalizer, _amb_normalizer, _con_normalizer,
-            compute_consistency=compute_consistency,
-        )
-        logger.info("_score EXIT: serialized %d sentence(s)", len(out.get("sentence_results", [])))
-        return out
-    except Exception:
-        logger.error("_score: _serialize_summary_score FAILED\n%s", _tb.format_exc())
-        raise
+            backend.to("cpu")
+            logger.info("_score_inner: backend moved back to %s", backend._device)
+    out = _serialize_summary_score(
+        result, _normalizer, _amb_normalizer, _con_normalizer,
+        compute_consistency=compute_consistency,
+    )
+    logger.info("_score_inner EXIT: %d sentence(s)", len(out.get("sentence_results", [])))
+    return out
 
 # ---------------------------------------------------------------------------
 # Gradio UI
 # ---------------------------------------------------------------------------
 
+# ZeroGPU requires @spaces.GPU to be on the exact function registered with
+# Gradio as the event handler — nested calls don't get the GPU worker context.
+
+@spaces.GPU
 def _score_api(
     source: str,
     summary: str,
@@ -179,21 +166,22 @@ def _score_api(
     seed_raw: float,      # -1 sentinel means None
     compute_consistency: bool,
 ) -> dict:
-    """Gradio-queue-compatible wrapper called by both UI and the /score endpoint."""
-    import traceback as _tb
+    """Full-parameter handler — registered as api_name='score_api' and used by the FastAPI proxy."""
     logger.info(
         "_score_api ENTER: sample_count=%s seed_raw=%s compute_consistency=%s "
         "src_len=%d smr_len=%d",
         sample_count, seed_raw, compute_consistency, len(source), len(summary),
     )
     seed = int(seed_raw) if seed_raw is not None and seed_raw >= 0 else None
-    try:
-        result = _score(source, summary, int(sample_count), seed, compute_consistency)
-        logger.info("_score_api EXIT: OK")
-        return result
-    except Exception:
-        logger.error("_score_api: _score raised an exception\n%s", _tb.format_exc())
-        raise
+    result = _score_inner(source, summary, int(sample_count), seed, compute_consistency)
+    logger.info("_score_api EXIT: OK")
+    return result
+
+
+@spaces.GPU
+def _ui_score(source: str, summary: str) -> dict:
+    """Simplified handler for the UI Score button (fixed defaults)."""
+    return _score_inner(source, summary, 10, None, True)
 
 
 with gr.Blocks(title="Stylo — Summary Uncertainty") as demo:
@@ -216,7 +204,7 @@ with gr.Blocks(title="Stylo — Summary Uncertainty") as demo:
     run_btn = gr.Button("Score", variant="primary")
     out_box = gr.JSON(label="Sentence uncertainty results")
     run_btn.click(
-        fn=lambda src, smr: _score_api(src, smr, 10, -1, True),
+        fn=_ui_score,
         inputs=[src_box, smr_box],
         outputs=out_box,
     )
