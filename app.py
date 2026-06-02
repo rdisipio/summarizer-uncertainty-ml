@@ -168,13 +168,17 @@ with gr.Blocks(title="Stylo — Summary Uncertainty") as demo:
         outputs=out_box,
     )
 
-# demo.app is created when the with-block exits (Gradio 6 __exit__).
-# Add the legacy /score endpoint so the browser extension works unchanged.
+# launch() creates a brand-new App instance (overwriting demo.app from __exit__),
+# so routes must be added to the app returned by launch(), not to demo.app above.
+# prevent_thread_lock=True makes launch() return immediately so we can do that.
 
 _api_token = os.environ.get("API_TOKEN") or None
 
+demo.queue()
+app, _, _ = demo.launch(prevent_thread_lock=True)
 
-@demo.app.post("/score")
+
+@app.post("/score")
 def score_endpoint(
     request: ScoreRequest,
     x_api_token: str | None = Header(default=None),
@@ -190,14 +194,14 @@ def score_endpoint(
     )
 
 
-@demo.app.get("/health")
+@app.get("/health")
 def health() -> dict:
     return {"status": "ok"}
 
 
-@demo.app.get("/wake")
+@app.get("/wake")
 def wake() -> dict:
     return {"status": "awake"}
 
 
-demo.queue().launch()
+demo.block_thread()
