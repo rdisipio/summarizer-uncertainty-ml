@@ -176,7 +176,7 @@ class SummaryUncertaintyScorer:
         source: str,
         summary: str,
         sentences: Sequence[str] | None = None,
-        sample_count: int = 10,
+        sample_count: int = 7,
         top_k_tokens: int | None = None,
         seed: int | None = None,
     ) -> SummaryScore:

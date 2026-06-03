@@ -42,7 +42,7 @@ class ScoreRequest(BaseModel):
     source: str = Field(min_length=1)
     summary: str = Field(min_length=1)
     sentences: list[str] | None = None
-    sample_count: int = Field(default=10, ge=1, le=100)
+    sample_count: int = Field(default=7, ge=1, le=100)
     top_k_tokens: int | None = Field(default=None, ge=1)
     seed: int | None = None
     compute_consistency: bool = True
