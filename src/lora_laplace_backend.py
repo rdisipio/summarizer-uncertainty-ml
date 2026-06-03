@@ -35,6 +35,7 @@ import numpy as np
 import torch
 import torch.nn.functional as F
 from transformers import AutoModelForSeq2SeqLM, AutoTokenizer
+from transformers.modeling_outputs import BaseModelOutput
 
 try:
     from peft import PeftModel
@@ -53,7 +54,7 @@ from .scorer import (
 
 logger = logging.getLogger(__name__)
 
-_DEFAULT_MODEL = "facebook/bart-base"
+_DEFAULT_MODEL = "google/flan-t5-small"
 
 
 @dataclass
@@ -199,9 +200,14 @@ class LoraLaplaceBackend(RuleBasedSentenceBackend):
         _dec = torch.full(
             (1, self.DECODER_PAD_LENGTH), _bos, dtype=torch.long, device=self._device
         )
-        # Zero-perturbation dummy sample: exercises _apply_perturbation,
-        # the perturbed forward pass, _restore_baseline, and the MPS→CPU
-        # logit readback so none of these paths are cold on the first real request.
+        # Zero-perturbation dummy sample: exercises the encoder cache path,
+        # _apply_perturbation, the decoder-only forward pass, _restore_baseline,
+        # and the MPS→CPU logit readback so none of these paths are cold on
+        # the first real request.
+        with torch.no_grad():
+            _enc_hidden = self._model.get_encoder()(
+                input_ids=_enc, attention_mask=_enc_mask
+            ).last_hidden_state
         _zero_perturbations = {
             name: torch.zeros_like(baseline)
             for name, baseline in self._lora_baseline.items()
@@ -210,7 +216,9 @@ class LoraLaplaceBackend(RuleBasedSentenceBackend):
         try:
             with torch.no_grad():
                 _outputs = self._model(
-                    input_ids=_enc, attention_mask=_enc_mask, decoder_input_ids=_dec
+                    attention_mask=_enc_mask,
+                    encoder_outputs=BaseModelOutput(last_hidden_state=_enc_hidden),
+                    decoder_input_ids=_dec,
                 )
             # Force MPS→CPU readback to pre-warm the transfer path.
             _ = F.softmax(_outputs.logits, dim=-1).cpu().float().numpy()
@@ -368,9 +376,21 @@ class LoraLaplaceBackend(RuleBasedSentenceBackend):
             adjusted_sentence_slices[sentence_spec.sentence_index] = (tok_start, tok_end)
             adjusted_sentences.append(sentence_spec)
 
+        # Run encoder once and cache its output; all posterior samples share it
+        # because LoRA adapters are decoder-only (encoder weights are frozen
+        # and never perturbed).
+        t0 = time.monotonic()
+        with torch.no_grad():
+            encoder_output = self._model.get_encoder()(
+                input_ids=encoder_input_ids,
+                attention_mask=encoder_attention_mask,
+            )
+        logger.info("Encoder forward pass cached (%.2fs)", time.monotonic() - t0)
+
         metadata = dict(prepared.metadata)
         metadata["encoder_input_ids"] = encoder_input_ids
         metadata["encoder_attention_mask"] = encoder_attention_mask
+        metadata["encoder_hidden_state"] = encoder_output.last_hidden_state
         metadata["decoder_input_ids"] = decoder_input_ids
         metadata["summary_token_ids"] = summary_token_ids
         metadata["sentence_token_slices"] = adjusted_sentence_slices
@@ -394,10 +414,10 @@ class LoraLaplaceBackend(RuleBasedSentenceBackend):
         baseline.  Restoration happens in a finally block so partial failures
         cannot leave the model in a perturbed state.
         """
-        encoder_input_ids: torch.Tensor = prepared_summary.metadata["encoder_input_ids"]
         encoder_attention_mask: torch.Tensor = prepared_summary.metadata[
             "encoder_attention_mask"
         ]
+        encoder_hidden_state: torch.Tensor = prepared_summary.metadata["encoder_hidden_state"]
         decoder_input_ids: torch.Tensor = prepared_summary.metadata["decoder_input_ids"]
         summary_token_ids: list[int] = prepared_summary.metadata["summary_token_ids"]
         sentence_token_slices: dict[int, tuple[int, int]] = prepared_summary.metadata[
@@ -412,8 +432,8 @@ class LoraLaplaceBackend(RuleBasedSentenceBackend):
             t0 = time.monotonic()
             with torch.no_grad():
                 outputs = self._model(
-                    input_ids=encoder_input_ids,
                     attention_mask=encoder_attention_mask,
+                    encoder_outputs=BaseModelOutput(last_hidden_state=encoder_hidden_state),
                     decoder_input_ids=decoder_input_ids,
                 )
             t_forward = time.monotonic() - t0
@@ -428,11 +448,10 @@ class LoraLaplaceBackend(RuleBasedSentenceBackend):
         t_softmax = time.monotonic() - t0
 
         logger.info(
-            "Forward pass: perturb=%.2fs forward=%.2fs softmax=%.2fs encoder_shape=%s decoder_shape=%s",
+            "Forward pass: perturb=%.2fs forward=%.2fs softmax=%.2fs decoder_shape=%s",
             t_perturb,
             t_forward,
             t_softmax,
-            encoder_input_ids.shape,
             decoder_input_ids.shape,
         )
 

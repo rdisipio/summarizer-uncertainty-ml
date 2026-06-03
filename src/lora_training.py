@@ -102,39 +102,51 @@ def build_lora_model(
     target_modules: list[str] | None = None,
     layers_to_transform: list[int] | None = None,
     layers_pattern: str | None = None,
+    layer_container: str | None = None,
 ):
     """Load a seq2seq base model and wrap it with a LoRA adapter.
 
     Args:
         layers_to_transform: If set, only inject LoRA into these layer indices
-            (0-based). E.g. ``[10, 11]`` for the last two decoder layers of a
-            12-layer BART model.
+            (0-based). E.g. ``[4, 5]`` for flan-t5-small (6 decoder blocks,
+            0-indexed), or ``[10, 11]`` for the last two layers of BART-base.
         layers_pattern: Component of the module path that scopes the layer
             filter, e.g. ``"decoder"`` to restrict to decoder layers only.
             Combined with ``layers_to_transform`` to build a regex for
             ``target_modules`` (avoids PEFT version incompatibilities with
             the native ``layers_to_transform`` / ``layers_pattern`` API).
+        layer_container: The path segment that precedes the layer index.
+            ``"layers"`` for BART (``decoder.layers.N``), ``"block"`` for T5
+            (``decoder.block.N``).
 
     Returns (peft_model, tokenizer).
     """
     from peft import LoraConfig, TaskType, get_peft_model
     from transformers import AutoModelForSeq2SeqLM, AutoTokenizer
 
+    # Detect T5 vs BART defaults from the model name when not overridden.
+    is_t5 = "t5" in model_name.lower()
     if target_modules is None:
-        target_modules = ["q_proj", "v_proj"]
+        # For T5: q+v+o covers query focus, value extraction, and the residual
+        # write path of cross-attention — the three highest-impact projections
+        # for seq2seq summarization. k is skipped (least impactful for this task).
+        # For BART: q_proj+v_proj mirrors the original LoRA paper defaults.
+        target_modules = ["q", "v", "o"] if is_t5 else ["q_proj", "v_proj"]
     if layers_to_transform is None:
-        layers_to_transform = [10, 11]
+        layers_to_transform = [4, 5] if is_t5 else [10, 11]
     if layers_pattern is None:
         layers_pattern = "decoder"
+    if layer_container is None:
+        layer_container = "block" if is_t5 else "layers"
 
     # Build a regex that selects only the requested layers within the
-    # requested component (e.g. decoder layers 10 and 11).
-    # BART module paths look like:
-    #   model.decoder.layers.10.self_attn.q_proj
-    #   model.decoder.layers.11.encoder_attn.v_proj
+    # requested component (e.g. decoder layers 10 and 11 of BART, or
+    # decoder blocks 4 and 5 of T5-small).
+    # BART: model.decoder.layers.10.self_attn.q_proj
+    # T5:   decoder.block.4.layer.0.SelfAttention.q
     layer_alts = "|".join(str(l) for l in layers_to_transform)
     module_alts = "|".join(re.escape(m) for m in target_modules)
-    computed_target = rf".*{re.escape(layers_pattern)}\.layers\.({layer_alts})\.\w+\.({module_alts})$"
+    computed_target = rf".*{re.escape(layers_pattern)}\.{re.escape(layer_container)}\.({layer_alts})\..*\.({module_alts})$"
     logger.info("LoRA target regex: %s", computed_target)
 
     logger.info("Loading base model %r", model_name)
