@@ -10,7 +10,6 @@ from __future__ import annotations
 import json
 import logging
 import random
-import re
 from pathlib import Path
 from typing import Any
 
@@ -112,15 +111,13 @@ def build_lora_model(
             0-indexed), or ``[10, 11]`` for the last two layers of BART-base.
         layers_pattern: Component of the module path that scopes the layer
             filter, e.g. ``"decoder"`` to restrict to decoder layers only.
-            Combined with ``layers_to_transform`` to build a regex for
-            ``target_modules`` (avoids PEFT version incompatibilities with
-            the native ``layers_to_transform`` / ``layers_pattern`` API).
         layer_container: The path segment that precedes the layer index.
             ``"layers"`` for BART (``decoder.layers.N``), ``"block"`` for T5
             (``decoder.block.N``).
 
     Returns (peft_model, tokenizer).
     """
+    import torch.nn as nn
     from peft import LoraConfig, TaskType, get_peft_model
     from transformers import AutoModelForSeq2SeqLM, AutoTokenizer
 
@@ -139,26 +136,39 @@ def build_lora_model(
     if layer_container is None:
         layer_container = "block" if is_t5 else "layers"
 
-    # Build a regex that selects only the requested layers within the
-    # requested component (e.g. decoder layers 10 and 11 of BART, or
-    # decoder blocks 4 and 5 of T5-small).
-    # BART: model.decoder.layers.10.self_attn.q_proj
-    # T5:   decoder.block.4.layer.0.SelfAttention.q
-    layer_alts = "|".join(str(l) for l in layers_to_transform)
-    module_alts = "|".join(re.escape(m) for m in target_modules)
-    computed_target = rf".*{re.escape(layers_pattern)}\.{re.escape(layer_container)}\.({layer_alts})\..*\.({module_alts})$"
-    logger.info("LoRA target regex: %s", computed_target)
-
     logger.info("Loading base model %r", model_name)
     base_model = AutoModelForSeq2SeqLM.from_pretrained(model_name)
     tokenizer = AutoTokenizer.from_pretrained(model_name)
+
+    # Enumerate exact module paths by inspecting the loaded model.
+    # This avoids regex/backtracking ambiguities across PEFT and transformers
+    # versions, and is immune to internal attention module renaming.
+    proj_set = set(target_modules)
+    layer_idx_set = {str(i) for i in layers_to_transform}
+    exact_targets = [
+        name
+        for name, module in base_model.named_modules()
+        if isinstance(module, nn.Linear)
+        and name.split(".")[-1] in proj_set
+        and any(
+            f"{layers_pattern}.{layer_container}.{idx}." in name
+            for idx in layer_idx_set
+        )
+    ]
+    if not exact_targets:
+        raise ValueError(
+            f"No Linear modules found matching projections {target_modules!r} "
+            f"in {layers_pattern}.{layer_container}.{{{','.join(sorted(layer_idx_set))}}} "
+            f"of model {model_name!r}. Check layers_to_transform and target_modules."
+        )
+    logger.info("LoRA target modules (%d): %s", len(exact_targets), exact_targets)
 
     lora_config = LoraConfig(
         task_type=TaskType.SEQ_2_SEQ_LM,
         r=lora_rank,
         lora_alpha=lora_alpha,
         lora_dropout=lora_dropout,
-        target_modules=computed_target,
+        target_modules=exact_targets,
         bias="none",
     )
     peft_model = get_peft_model(base_model, lora_config)
